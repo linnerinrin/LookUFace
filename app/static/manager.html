@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仓库管理 | LookUFace</title>
+    <link rel="stylesheet" href="manager.css">
+    <link rel="icon" type="image/png" href="logo.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo" id="logo">
+                <span class="logo-text">LookUFace</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="idx.html" class="nav-item">
+                    <span>实时识别</span>
+                </a>
+                <a href="manager.html" class="nav-item active">
+                    <span>仓库管理</span>
+                </a>
+                <a href="account.html" class="nav-item">
+                    <span>账号管理</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button id="themeToggle" class="sidebar-btn">
+                    <span>切换主题</span>
+                </button>
+                <button id="loginBtn" class="sidebar-btn">
+                    <span>登录账号</span>
+                </button>
+                <div class="status-badge" id="connectionStatus">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">加载中...</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <h1>仓库管理</h1>
+                <div class="header-actions">
+                    <button id="refreshBtn" class="btn btn-outline">
+                        <span>刷新</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">👥</div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="totalCount">0</span>
+                        <span class="stat-label">已注册人脸</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="faces-container">
+                <div class="faces-header">
+                    <h3>人脸列表</h3>
+                    <span class="faces-count" id="facesCount">0 条记录</span>
+                </div>
+                <div id="facesGrid" class="faces-grid">
+                    <div class="loading-state">加载中...</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="previewModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>注册照片</h3>
+                <button class="modal-close" onclick="closePreview()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <img id="modalImg" src="" alt="预览图">
+                <div id="modalInfo" class="modal-info"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="authModal" class="modal auth-modal" style="display: none;">
+        <div class="modal-content auth-content">
+            <div class="modal-header">
+                <h3 id="authTitle">登录账号</h3>
+                <button class="modal-close" onclick="closeAuthModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="authBody"></div>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script src="manager.js"></script>
+</body>
+</html>

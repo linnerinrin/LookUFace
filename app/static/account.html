@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>账号管理 | LookUFace</title>
+    <link rel="stylesheet" href="account.css">
+    <link rel="icon" type="image/png" href="logo.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo" id="logo">
+                <span class="logo-text">LookUFace</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="idx.html" class="nav-item">
+                    <span>实时识别</span>
+                </a>
+                <a href="manager.html" class="nav-item">
+                    <span>仓库管理</span>
+                </a>
+                <a href="account.html" class="nav-item active">
+                    <span>账号管理</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button id="themeToggle" class="sidebar-btn">
+                    <span>切换主题</span>
+                </button>
+                <button id="loginBtn" class="sidebar-btn">
+                    <span>登录账号</span>
+                </button>
+                <div class="status-badge" id="connectionStatus">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">未登录</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <h1>账号管理</h1>
+            </header>
+
+            <div id="notLoggedIn" class="not-logged-in">
+                <p>请先登录账号</p>
+                <button id="gotoLoginBtn" class="btn btn-primary">立即登录</button>
+            </div>
+
+            <div id="loggedIn" style="display: none;">
+                <div class="profile-card">
+                    <div class="profile-header">
+                        <div class="profile-avatar">
+                            <span id="profileAvatar">👤</span>
+                        </div>
+                        <div class="profile-info">
+                            <h2 id="profileName">用户名</h2>
+                            <p id="profileEmail">email@example.com</p>
+                        </div>
+                    </div>
+                    <div class="profile-stats">
+                        <div class="stat-item">
+                            <span class="stat-value" id="profileNickname">-</span>
+                            <span class="stat-label">昵称</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="profileSince">-</span>
+                            <span class="stat-label">注册时间</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="edit-card">
+                    <h3>编辑个人信息</h3>
+                    <div class="form-group">
+                        <label>昵称</label>
+                        <input type="text" id="editNickname" class="auth-input" placeholder="昵称">
+                    </div>
+                    <button id="saveProfileBtn" class="btn btn-primary">保存修改</button>
+                </div>
+
+                <div class="security-card">
+                    <h3>安全设置</h3>
+                    <div class="security-item">
+                        <div class="security-info">
+                            <span>修改密码</span>
+                        </div>
+                        <button id="changePasswordBtn" class="btn btn-outline">修改</button>
+                    </div>
+                    <div class="security-item">
+                        <div class="security-info">
+                            <span>退出登录</span>
+                        </div>
+                        <button id="logoutBtn" class="btn btn-outline btn-danger">退出</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="passwordModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>修改密码</h3>
+                <button class="modal-close" onclick="closePasswordModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>当前密码</label>
+                    <input type="password" id="oldPassword" class="auth-input" placeholder="请输入当前密码">
+                </div>
+                <div class="form-group">
+                    <label>新密码</label>
+                    <input type="password" id="newPassword" class="auth-input" placeholder="请输入新密码（至少6位）">
+                </div>
+                <div class="form-group">
+                    <label>确认新密码</label>
+                    <input type="password" id="confirmNewPassword" class="auth-input" placeholder="请再次输入新密码">
+                </div>
+                <button id="confirmPwdBtn" class="btn btn-primary btn-block">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="authModal" class="modal auth-modal" style="display: none;">
+        <div class="modal-content auth-content">
+            <div class="modal-header">
+                <h3 id="authTitle">登录账号</h3>
+                <button class="modal-close" onclick="closeAuthModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="authBody"></div>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script src="account.js"></script>
+</body>
+</html>

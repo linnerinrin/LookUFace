@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  cv-backend:
+    build: .
+    container_name: cv-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./uploads:/app/uploads
+      - ./storage:/app/storage
+      - ./face_analysis.db:/app/face_analysis.db
+    environment:
+      - DATABASE_URL=sqlite:///./face_analysis.db
+      - DEBUG=false
+    restart: unless-stopped
+
+  # 可选：Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: cv-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped

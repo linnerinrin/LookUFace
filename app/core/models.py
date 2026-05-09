@@ -1,8 +1,6 @@
 """
+app/core/models.py
 年龄/性别识别模型
-- 使用 Caffe 预训练模型
-- 年龄分为8个年龄段
-- 性别分为男/女
 """
 
 import cv2
@@ -35,7 +33,9 @@ class GenderAgeModel:
         self.age_list = ["0-4", "4-8", "8-12", "12-20", "20-38", "38-48", "48-60", "60+"]
 
     def predict(self, face: np.ndarray) -> Tuple[str, str, float]:
-        """预测性别和年龄，返回 (gender, age, confidence)"""
+        """预测性别和年龄，返回 (gender, age, confidence)
+        confidence计算为两个置信度均值
+        """
         if face.size == 0 or face.shape[0] < 50 or face.shape[1] < 50:
             return ("Unknown", "Unknown", 0.0)
 
@@ -58,3 +58,4 @@ class GenderAgeModel:
             self.age_list[age_idx],
             float((gender_conf + age_conf) / 2)
         )
+gender_age_model=GenderAgeModel()

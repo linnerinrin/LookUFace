@@ -502,7 +502,7 @@ async function connect() {
         recordBtn.disabled = false;
         registerBtn.disabled = false;
     };
-    ws.onmessage = async (event) => {
+    ws.onmessage = (event) => {
         try { await updateResults(JSON.parse(event.data)); }
         catch (e) { console.error('解析失败:', e); }
     };

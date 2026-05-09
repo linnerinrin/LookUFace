@@ -1,35 +1,49 @@
 """
-主要 API 路由
-- 人脸检测（上传图片/Base64/异步）
-- WebSocket 实时摄像头流
-- 人脸注册/删除/查询（带用户绑定）
+/app/api/routes.py
+主要API路由
+run_sync_analysis() 异步处理face_service的analysis.py
+health_check() 健康检测
+websocket_camera() 开启websocket摄像流
+register_face() 注册人脸 并从token中绑定账户
+list_faces_with_screenshots() 从token中获取账户 并获得截图列表
+delete_face() 获取账户 删除人脸
+get_face_screenshot() 获取账户 获得人脸截图
 """
 
-import json
 import asyncio
+import cv2
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form, WebSocket, WebSocketDisconnect, Request
-import cv2
-import numpy as np
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, WebSocket, WebSocketDisconnect, Depends
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPBearer
 
-from app.api.schemas import DetectResponse, HealthResponse, TaskStatus
-from app.auth.auth import decode_token
+from app.api.schemas import DetectResponse, HealthResponse, DeleteFaceResponse, FaceRegisterResponse, FacesListResponse,DeleteFaceRequest, GetScreenshotRequest
+from app.auth.routes import get_current_user
 from app.core.face_identity import face_identity
-from app.services.task_service import task_service
 from app.services.face_service import face_service
+from app.database import User
 from app.config import settings
-from app.utils.image_utils import decode_base64_to_image
 
+#创建路由器 后续接口都在这里注册
 router = APIRouter()
+
+#cpu密集型任务放进线程池
 executor = ThreadPoolExecutor(max_workers=settings.MAX_WORKERS)
 
+#读取token
+security = HTTPBearer()
 
 async def run_sync_analysis(image: np.ndarray, detect_gender_age: bool) -> DetectResponse:
     """在线程池中执行同步分析，避免阻塞事件循环"""
     loop = asyncio.get_event_loop()
+
+    #loop.run_in_executor(executor,func,*args)
+    #在线程executor中异步执行func函数 可以被await
     return await loop.run_in_executor(
         executor,
         face_service.analyze,
@@ -46,80 +60,7 @@ async def health_check():
         status="healthy",
         version=settings.APP_VERSION,
         models_loaded=True,
-        registered_faces=face_identity.get_face_count()
     )
-
-
-@router.post("/detect/upload", response_model=DetectResponse)
-async def detect_from_upload(
-    file: UploadFile = File(...),
-    detect_gender_age: bool = True
-):
-    """上传图片文件进行人脸分析"""
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "只支持图片文件")
-
-    contents = await file.read()
-    if len(contents) > settings.MAX_FILE_SIZE:
-        raise HTTPException(400, f"文件过大，最大 {settings.MAX_FILE_SIZE // 1024 // 1024}MB")
-
-    nparr = np.frombuffer(contents, np.uint8)
-    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    if image is None:
-        raise HTTPException(400, "无法解码图片")
-
-    return await run_sync_analysis(image, detect_gender_age)
-
-
-@router.post("/detect/base64", response_model=DetectResponse)
-async def detect_from_base64(
-    request: dict,
-    detect_gender_age: bool = True
-):
-    """Base64 编码图片进行人脸分析"""
-    image_base64 = request.get("image_base64")
-    if not image_base64:
-        raise HTTPException(400, "缺少 image_base64 字段")
-
-    image = decode_base64_to_image(image_base64)
-    if image is None:
-        raise HTTPException(400, "Base64 解码失败")
-
-    return await run_sync_analysis(image, detect_gender_age)
-
-
-@router.post("/detect/async", response_model=TaskStatus)
-async def detect_async(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    detect_gender_age: bool = True
-):
-    """异步处理：后台任务 + 轮询结果"""
-    contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    if image is None:
-        raise HTTPException(400, "无法解码图片")
-
-    task = task_service.create_task()
-    background_tasks.add_task(
-        task_service.process_task,
-        task.task_id,
-        image,
-        detect_gender_age
-    )
-    return task
-
-
-@router.get("/task/{task_id}", response_model=TaskStatus)
-async def get_task_status(task_id: str):
-    """查询异步任务状态"""
-    task = task_service.get_task(task_id)
-    if task is None:
-        raise HTTPException(404, "任务不存在")
-    return task
 
 
 @router.websocket("/ws/camera")
@@ -130,7 +71,15 @@ async def websocket_camera(websocket: WebSocket):
 
     try:
         while True:
-            message = await websocket.receive()
+            try:
+                message = await websocket.receive()
+            except RuntimeError as e:
+                print(f"WebSocket 接收异常: {e}")
+                break
+            except WebSocketDisconnect:
+                print("WebSocket 客户端已断开")
+                break
+
             if "bytes" in message:
                 nparr = np.frombuffer(message["bytes"], np.uint8)
                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -138,23 +87,12 @@ async def websocket_camera(websocket: WebSocket):
                 if frame is None:
                     continue
 
-                result = face_service.analyze(
-                    frame,
-                    detect_gender_age=True,
-                    detect_identity=True
-                )
+            #数据拿去分析
+                result = await run_sync_analysis(frame, detect_gender_age=True)
+                faces_data = [f.dict() for f in result.faces]
 
-                faces_data = []
-                for f in result.faces:
-                    faces_data.append({
-                        "bbox": f.bbox,
-                        "gender": f.gender,
-                        "age": f.age,
-                        "confidence": f.confidence,
-                        "identity": f.identity,
-                        "identity_confidence": f.identity_confidence,
-                    })
 
+            #返回分析结果
                 await websocket.send_json({
                     "success": True,
                     "face_count": result.face_count,
@@ -165,11 +103,11 @@ async def websocket_camera(websocket: WebSocket):
         print("WebSocket 客户端已断开")
 
 
-@router.post("/face/register")
+@router.post("/face/register",response_model=FaceRegisterResponse)
 async def register_face(
     file: UploadFile = File(...),
     name: str = Form(...),
-    token: str = Form(None)
+    current_user: User = Depends(get_current_user)
 ):
     """注册人脸并绑定到当前登录用户"""
     contents = await file.read()
@@ -177,104 +115,63 @@ async def register_face(
     image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
     if image is None:
-        return {"success": False, "message": "无法解码图片"}
+        return FaceRegisterResponse(
+            success=False,
+            name=name,
+            screenshot="",
+            message="无法解码图片"
+        )
 
-    # 从 token 获取用户 ID
-    user_id = None
-    if token:
-        payload = decode_token(token)
-        if payload:
-            user_id = payload.get("user_id")
-            print(f"注册人脸，用户ID: {user_id}")
+    user_id = current_user.id
 
     # 保存截图
-    screenshot_dir = Path("data/screenshots")
+    screenshot_dir = settings.screenshot_dir
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"{timestamp}.jpg"
     screenshot_path = screenshot_dir / filename
     cv2.imwrite(str(screenshot_path), image)
 
-    relative_path = f"data/screenshots/{filename}"
+    relative_path = f"storage/screenshots/{filename}"
 
-    # 注册人脸并绑定用户
     success = face_identity.register_from_image_with_screenshot(
         image, name, relative_path, user_id
     )
 
-    return {
-        "success": success,
-        "name": name,
-        "screenshot": relative_path,
-        "message": f"注册成功！欢迎 {name}" if success else "注册失败"
-    }
+    return FaceRegisterResponse(
+        success=success,
+        name=name,
+        screenshot=relative_path,
+        message=f"注册成功！欢迎 {name}" if success else "注册失败"
+    )
 
 
-@router.get("/face/list_with_screenshots", response_model=None)
-async def list_faces_with_screenshots(request: Request):
+@router.post("/face/list_with_screenshots",response_model=FacesListResponse)
+async def list_faces_with_screenshots(current_user:User=Depends(get_current_user)):
     """列出当前用户的所有人脸（带截图路径）"""
-    token = request.headers.get("Authorization")
-    user_id = None
-    if token and token.startswith("Bearer "):
-        token = token[7:]
-        payload = decode_token(token)
-        if payload:
-            user_id = payload.get("user_id")
-
-    if user_id is None:
-        return {"faces": []}
-
-    return {"faces": face_identity.get_all_faces_with_screenshots(user_id)}
+    user_id = current_user.id
+    return FacesListResponse(faces=face_identity.get_all_faces_with_screenshots(user_id))
 
 
-@router.get("/face/list")
-async def list_faces(request: Request):
-    """列出当前用户的所有人脸名称"""
-    token = request.headers.get("Authorization")
-    user_id = None
-    if token and token.startswith("Bearer "):
-        token = token[7:]
-        payload = decode_token(token)
-        if payload:
-            user_id = payload.get("user_id")
-    return {"faces": face_identity.get_all_faces(user_id), "count": face_identity.get_face_count(user_id)}
 
-
-@router.delete("/face/{name}")
-async def delete_face(name: str, request: Request):
+@router.delete("/face",response_model=DeleteFaceResponse)
+async def delete_face(request:DeleteFaceRequest, current_user:User=Depends(get_current_user)):
     """删除人脸（必须登录）"""
-    token = request.headers.get("Authorization")
-    user_id = None
-    if token and token.startswith("Bearer "):
-        token = token[7:]
-        payload = decode_token(token)
-        if payload:
-            user_id = payload.get("user_id")
-
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="请先登录")
-
+    user_id = current_user.id
+    name=request.name
     success = face_identity.delete_face(name, user_id)
-    return {"success": success, "name": name}
+    return DeleteFaceResponse(
+        success=success,
+        name=name
+    )
 
 
-@router.get("/face/screenshot/{name}")
-async def get_face_screenshot(name: str, request: Request):
+@router.post("/face/screenshot",response_class=FileResponse)
+async def get_face_screenshot(request:GetScreenshotRequest, current_user:User=Depends(get_current_user)):
     """获取人脸截图（必须登录）"""
-    from fastapi.responses import FileResponse
-    from urllib.parse import unquote
-
-    token = request.headers.get("Authorization")
-    user_id = None
-    if token and token.startswith("Bearer "):
-        token = token[7:]
-        payload = decode_token(token)
-        if payload:
-            user_id = payload.get("user_id")
-
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="请先登录")
-
+    user_id = current_user.id
+    name=request.name
+    #对前端编码后的中文字符进行解码
     decoded_name = unquote(name)
     screenshot_path = face_identity.get_screenshot_path(decoded_name, user_id)
 
@@ -290,3 +187,7 @@ async def get_face_screenshot(name: str, request: Request):
         raise HTTPException(404, "截图文件不存在")
 
     return FileResponse(str(screenshot_path))
+
+
+
+#@router.post("")

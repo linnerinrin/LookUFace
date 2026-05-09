@@ -1,62 +1,41 @@
 """
-认证 API 路由
-- 用户注册/登录
-- 个人信息管理（获取/修改）
-- 密码修改
-- 邮箱验证码发送
+app/auth/routes.py
+认证API路由
+get_current_user 获取jwt并解码出用户id 然后提取用户信息
+send_code 发验证码
+register 注册
+login 登录
+reset_password 密码重置
+get_profile 获取用户信息
+update_profile 更新信息
+change_password 改密码
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from datetime import datetime
 
+from app.auth.schemas import SendCodeRequest, RegisterRequest, ResetPasswordRequest, LoginRequest, ChangePasswordRequest, \
+    UpdateProfileRequest, SendCodeResponse, RegisterResponse, ResetPasswordResponse, ChangePasswordResponse, \
+    LoginResponse, UpdateProfileResponse, UserProfile
 from app.database import get_db, User
-from app.auth.auth import verify_password, get_password_hash, create_access_token, decode_token
-from app.auth.email_service import send_verification_code, verify_code
+from app.core.auth import verify_password, get_password_hash, create_access_token, decode_token
+from app.services.email_service import email_service
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 security = HTTPBearer()
 
 
-# ========== 请求模型 ==========
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    password: str
-    nickname: str = None                    # 昵称可选
-    code: str
-
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class SendCodeRequest(BaseModel):
-    email: EmailStr
-    type: str  # register 或 reset
-
-
-class ResetPasswordRequest(BaseModel):
-    email: EmailStr
-    code: str
-    new_password: str
-
-
-class UpdateProfileRequest(BaseModel):
-    nickname: str = None
-    bio: str = None
-
-
-class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str
-
-
-# ========== 辅助函数 ==========
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
-    """从 token 获取当前用户"""
+    """
+    从token获得当前用户
+    :param credentials: 注入认证依赖
+    :param db:注入数据库会话依赖
+    :return:
+    """
+
+    # 解码获得jwt字符串
     payload = decode_token(credentials.credentials)
     if not payload:
         raise HTTPException(status_code=401, detail="无效的token")
@@ -68,8 +47,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     return user
 
 
-# ========== API ==========
-@router.post("/send-code")
+@router.post("/send-code", response_model=SendCodeResponse)
 async def send_code(request: SendCodeRequest, db: Session = Depends(get_db)):
     """发送邮箱验证码"""
     if request.type == "register":
@@ -77,26 +55,29 @@ async def send_code(request: SendCodeRequest, db: Session = Depends(get_db)):
         if existing:
             raise HTTPException(status_code=400, detail="邮箱已被注册")
 
-    success = await send_verification_code(db, request.email, request.type)
+    success = await email_service.send_verification_code(db, request.email, request.type)
     if success:
-        return {"success": True, "message": "验证码已发送"}
+        return SendCodeResponse(
+            success=True,
+            message="验证码已发送")
     else:
         raise HTTPException(status_code=500, detail="发送失败")
 
 
-@router.post("/register")
+@router.post("/register", response_model=RegisterResponse)
 async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     """用户注册（使用邮箱）"""
-    if not verify_code(db, request.email, request.code, "register"):
+    if not email_service.verify_code(db, request.email, request.code, "register"):
         raise HTTPException(status_code=400, detail="验证码无效或已过期")
 
+    # db查询邮箱是否存在
     existing = db.query(User).filter(User.email == request.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="邮箱已被注册")
 
     # 昵称默认使用邮箱前缀
     nickname = request.nickname if request.nickname else request.email.split('@')[0]
-
+    # 写入db
     user = User(
         email=request.email,
         password_hash=get_password_hash(request.password),
@@ -108,18 +89,14 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
 
     token = create_access_token({"user_id": user.id, "email": user.email})
 
-    return {
-        "success": True,
-        "token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "nickname": user.nickname
-        }
-    }
+    return RegisterResponse(
+        success=True,
+        token=token,
+        user=user
+    )
 
 
-@router.post("/login")
+@router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest, db: Session = Depends(get_db)):
     """用户登录（使用邮箱）"""
     user = db.query(User).filter(User.email == request.email).first()
@@ -134,24 +111,17 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     token = create_access_token({"user_id": user.id, "email": user.email})
 
-    return {
-        "success": True,
-        "token": token,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "nickname": user.nickname,
-            "avatar": user.avatar,
-            "bio": user.bio,
-            "created_at": user.created_at.isoformat()
-        }
-    }
+    return LoginResponse(
+        success=True,
+        token=token,
+        user=user
+    )
 
 
-@router.post("/reset-password")
+@router.post("/reset-password",response_model=ResetPasswordResponse)
 async def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
     """重置密码"""
-    if not verify_code(db, request.email, request.code, "reset"):
+    if not email_service.verify_code(db, request.email, request.code, "reset"):
         raise HTTPException(status_code=400, detail="验证码无效或已过期")
 
     user = db.query(User).filter(User.email == request.email).first()
@@ -162,28 +132,23 @@ async def reset_password(request: ResetPasswordRequest, db: Session = Depends(ge
     user.updated_at = datetime.now()
     db.commit()
 
-    return {"success": True, "message": "密码重置成功"}
+    return ResetPasswordResponse(
+        success=True,
+        message="密码修改成功"
+    )
 
 
-@router.get("/profile")
+@router.get("/profile",response_model=UserProfile)
 async def get_profile(current_user: User = Depends(get_current_user)):
     """获取当前用户信息"""
-    return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "nickname": current_user.nickname,
-        "avatar": current_user.avatar,
-        "bio": current_user.bio,
-        "face_identity": current_user.face_identity,
-        "created_at": current_user.created_at.isoformat()
-    }
+    return current_user
 
 
-@router.put("/profile")
+@router.put("/profile",response_model=UpdateProfileResponse)
 async def update_profile(
-    request: UpdateProfileRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+        request: UpdateProfileRequest,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
 ):
     """更新个人信息"""
     if request.nickname is not None:
@@ -193,17 +158,17 @@ async def update_profile(
     current_user.updated_at = datetime.now()
     db.commit()
 
-    return {"success": True, "user": {
-        "nickname": current_user.nickname,
-        "bio": current_user.bio
-    }}
+    return UpdateProfileResponse(
+        success=True,
+        user=current_user
+    )
 
 
-@router.post("/change-password")
+@router.post("/change-password",response_model=ChangePasswordResponse)
 async def change_password(
-    request: ChangePasswordRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+        request: ChangePasswordRequest,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
 ):
     """修改密码"""
     if not verify_password(request.old_password, current_user.password_hash):
@@ -213,4 +178,7 @@ async def change_password(
     current_user.updated_at = datetime.now()
     db.commit()
 
-    return {"success": True, "message": "密码修改成功"}
+    return ChangePasswordResponse(
+        success=True,
+        message="密码修改成功"
+    )

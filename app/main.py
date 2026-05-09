@@ -1,25 +1,32 @@
 """
+app/main.py
 FastAPI 应用入口
-- 配置 CORS
-- 注册路由（API 路由 + 认证路由）
-- 生命周期管理
+lifespan() 生命周期管理 启动时创建数据库
+create_app()创建fastapi实例 配置cors 写进路由
 """
+import asyncio
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from starlette.staticfiles import StaticFiles
+
 from app.auth.routes import router as auth_router
+from app.check.routes import router as check_router
 from app.api.routes import router
 from app.config import settings
-from app.storage.database import init_db
+from app.database import Base, engine
+from app.services.email_service import cleanup_expired_codes
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """生命周期管理：启动时初始化数据库"""
     print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    init_db()
+    Base.metadata.create_all(bind=engine)
+    asyncio.create_task(cleanup_expired_codes())
     print("Models loaded successfully")
     yield
     print("Shutting down...")
@@ -47,6 +54,10 @@ def create_app() -> FastAPI:
 
     app.include_router(router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(check_router, prefix="/api/v1")
+
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
     return app
 
 
@@ -54,6 +65,15 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+    import webbrowser
+    import threading
+
+    def open_browser():
+        webbrowser.open("http://localhost:8000/idx.html")
+
+
+    threading.Timer(2, open_browser).start()  # 等 2 秒后打开
+
     uvicorn.run(
         "app.main:app",
         host=settings.HOST,

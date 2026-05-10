@@ -21,6 +21,9 @@
                 <a href="manager.html" class="nav-item">
                     <span>仓库管理</span>
                 </a>
+                <a href="console.html" class="nav-item">
+                    <span>控制台</span>
+                </a>
                 <a href="account.html" class="nav-item">
                     <span>账号管理</span>
                 </a>
@@ -42,79 +45,17 @@
         <main class="main-content">
             <header class="top-bar">
                 <h1>实时识别</h1>
-                <div class="header-actions">
-                    <button id="startBtn" class="btn btn-primary">
-                        <span>开始识别</span>
-                    </button>
-                    <button id="stopBtn" class="btn btn-secondary" disabled>
-                        <span>停止</span>
-                    </button>
-                </div>
             </header>
 
-            <div class="dashboard">
-                <div class="camera-card">
-                    <div class="card-header">
-                        <span class="card-title"> 摄像头画面</span>
-                        <div class="fps-counter" id="fps">FPS: --</div>
-                    </div>
-                    <div class="video-container">
-                        <!-- 登录遮罩层 -->
-                        <div id="loginOverlay" class="login-overlay" style="display: none;">
-                            <div class="login-overlay-content">
-                                <p>请先登录以使用人脸识别</p>
-                                <button id="overlayLoginBtn" class="btn btn-primary">立即登录</button>
-                            </div>
-                        </div>
-                        <video id="video" autoplay playsinline muted></video>
-                        <canvas id="overlayCanvas"></canvas>
-                    </div>
-                    <div class="camera-actions">
-                        <button id="recordBtn" class="btn btn-outline" disabled>
-                            <span>录制视频</span>
-                        </button>
-                        <div class="register-group">
-                            <input type="text" id="registerName" placeholder="输入姓名" maxlength="20">
-                            <button id="registerBtn" class="btn btn-success" disabled>
-                                <span>注册人脸</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="tip-text">
-                        提示：注册时请确保画面中只有一个人脸，保持光线充足
-                    </div>
-                </div>
-
-                <div class="results-card">
-                    <div class="card-header">
-                        <span class="card-title">识别结果</span>
-                        <span class="stats-badge" id="resultStats" style="display: none;">
-                            <span id="faceCount">0</span> 张 · <span id="processingTime">0</span>ms
-                        </span>
-                    </div>
-                    <div id="resultContent" class="results-scroll">
-                        <div class="empty-state">
-                            <p>点击"开始识别"启动摄像头</p>
-                        </div>
-                    </div>
-                </div>
+            <!-- 双 iframe 并排 -->
+            <div class="iframe-row">
+                <iframe src="in.html" allow="camera; microphone"></iframe>
+                <iframe src="out.html" allow="camera; microphone"></iframe>
             </div>
         </main>
     </div>
 
-    <div id="previewModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>注册照片</h3>
-                <button class="modal-close" onclick="closePreview()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <img id="modalImg" src="" alt="预览图">
-                <div id="modalInfo" class="modal-info"></div>
-            </div>
-        </div>
-    </div>
-
+    <!-- 认证模态框 -->
     <div id="authModal" class="modal auth-modal" style="display: none;">
         <div class="modal-content auth-content">
             <div class="modal-header">
@@ -124,8 +65,7 @@
             <div class="modal-body" id="authBody"></div>
         </div>
     </div>
-
-    <script src="auth.js"></script>
     <script src="idx.js"></script>
+    <script src="auth.js"></script>
 </body>
 </html>

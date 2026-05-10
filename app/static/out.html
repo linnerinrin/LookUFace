@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>出口摄像头</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { background: transparent; font-family: 'Inter', sans-serif; }
+        .container {
+            display: flex; flex-direction: column; gap: 10px;
+            padding: 8px; height: 100%; background: transparent;
+        }
+        .controls {
+            display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+        }
+        .btn {
+            padding: 6px 14px; border: none; border-radius: 8px;
+            cursor: pointer; font-size: 13px; font-weight: 500;
+        }
+        .btn-primary { background: #4a90e2; color: white; }
+        .btn-outline { background: transparent; border: 1px solid #ccc; color: #555; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .video-wrap {
+            position: relative; background: #1a1a2e; border-radius: 16px;
+            overflow: hidden; aspect-ratio: 4 / 3; flex-shrink: 0;
+        }
+        .video-wrap video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .video-wrap canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .fps { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.6); color: #0f0; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-family: monospace; z-index: 5; }
+        .results {
+            flex: 1; overflow-y: auto; background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(6px); border-radius: 16px; padding: 10px;
+        }
+        .card-title { font-weight: 600; margin-bottom: 6px; font-size: 14px; color: inherit; }
+        .empty-state { text-align: center; padding: 15px; color: #999; font-size: 13px; }
+        .face-card { color: white; padding: 6px 10px; border-radius: 10px; margin-bottom: 6px; font-size: 12px; }
+        .face-card.known { background: linear-gradient(135deg, #43a047, #1b5e20); }
+        .face-card.unknown { background: linear-gradient(135deg, #ff5722, #bf360c); }
+        .login-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 10; }
+        .login-overlay-content { text-align: center; color: white; }
+        body.dark { --bg: #1a1a2e; --text: #e0e0e0; }
+        body.dark .btn-outline { border-color: #555; color: #ccc; }
+        body.dark .results { background: rgba(40,40,60,0.15); }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- 控制按钮区（画布上方） -->
+    <div class="controls">
+        <button id="startBtn" class="btn btn-primary">开始识别</button>
+        <button id="stopBtn" class="btn btn-outline" disabled>停止识别</button>
+        <button id="recordBtn" class="btn btn-outline" disabled>录制</button>
+    </div>
+
+    <!-- 摄像头画布 -->
+    <div class="video-wrap">
+        <div id="loginOverlay" class="login-overlay" style="display: none;">
+            <div class="login-overlay-content">
+                <p>请先登录</p>
+                <button id="overlayLoginBtn" class="btn btn-primary">立即登录</button>
+            </div>
+        </div>
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlayCanvas"></canvas>
+        <div class="fps" id="fps">FPS: --</div>
+    </div>
+
+    <!-- 识别结果区（画布下方） -->
+    <div class="results">
+        <div class="card-title">识别结果</div>
+        <div id="resultContent">
+            <div class="empty-state">点击"开始识别"启动摄像头</div>
+        </div>
+    </div>
+</div>
+
+<script src="auth.js"></script>
+<script src="out.js"></script>
+</body>
+</html>

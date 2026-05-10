@@ -1,17 +1,13 @@
 // auth.js - 完整的用户认证模块
 
 /*
-countdownInterval 验证码定时器
-*/
-const API_BASE = '/api/v1'
-let countdownInterval = null;
-
-/*
+*logs 由于各个页面都继承auth.js 于是在这里写了 所有前端控制台输出都走forntlogsload 然后给sendlog
 **login showloginmodal显示登录认证框 然后给登录按钮绑handleLogin handlelogin调auth\login接口 接口调db对比邮箱密码 正确则寸token和用户数据然后放行
 ***register showregisterform显示注册认证框 给验证码按钮绑sendregistercode 调用auht\sentcode接口 用smtplib发验证码 给注册按钮handleregister handleregister确认验证码无误把新用户写入db
 ****changepassword 流程同register
 
-
+FrontLogsLoad() 把所有前端控制台输出sendlog()
+sendLog() 加载历史日志/把前端控制台输出贴进html
 initAuth()	初始化
 bindAuthEvents()	登录按钮跳转
 updateAuthUI()	更新导航栏登录按钮
@@ -32,6 +28,39 @@ startCountdown(btn)	验证码计时
 logout()	登出 清除jwt
 getCurrentUser()	解析user
 */
+
+const API_BASE = '/api/v1' //api端口路径 此处声明一次 其他js都继承auth所以不能重新声明
+let countdownInterval = null; //验证码计时器
+
+//集成logs
+(function FrontLogsLoad() {
+    function sendLog(level, args) {
+        const message = Array.from(args).map(a => {
+            try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
+            catch(e) { return String(a); }
+        }).join(' ');
+
+        const page = window.location.pathname.split('/').pop() || 'unknown';
+
+        fetch(`${API_BASE}/frontend-log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ level, message, page })
+        }).catch(() => {});
+    }
+
+    const _log = console.log;
+    const _warn = console.warn;
+    const _error = console.error;
+
+    console.log = function(...args) { _log.apply(console, args); sendLog('info', args); };
+    console.warn = function(...args) { _warn.apply(console, args); sendLog('warn', args); };
+    console.error = function(...args) { _error.apply(console, args); sendLog('error', args); };
+
+    window.addEventListener('error', function(e) {
+        sendLog('error', [`${e.message} (${e.filename}:${e.lineno})`]);
+    });
+})();
 
 //初始化
 function initAuth() {

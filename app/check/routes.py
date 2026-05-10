@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
 from app.auth.routes import get_current_user
-from app.check.schemas import CheckOutResponse, CheckInResponse, CheckInRequest, CheckOutRequest, PutQRcodeRequest
+from app.check.schemas import CheckOutResponse, CheckInResponse, CheckInRequest, CheckOutRequest, PutQRcodeRequest, \
+    FaceStatusRequest, FaceStatusResponse
 from app.config import settings
 from app.core.checking import checking
 from app.services.checking_service import checking_service
@@ -30,39 +31,39 @@ async def check_in(request:CheckInRequest,current_user:User=Depends(get_current_
         return CheckInResponse(
             success=False,
             name=name,
-            message=None,
-            response_times=request_times
+            message="",
+            response_times=request_times,
         )
     success=checking.check_in(name=name,user_id=user_id)
     return CheckInResponse(
         success=success,
         name=name,
         message=f"欢迎 {name}，离场或暂离请自觉签退付费！",
-        response_times=0
+        response_times=0,
+        delete_require_time=settings.DELETE_REQUIRE_TIME
         )
 
-@router.post("/checkout",response_model=CheckOutResponse)
-async def check_out(request:CheckOutRequest,current_user:User=Depends(get_current_user)):
-    """签退"""
+@router.post("/checkout", response_model=CheckOutResponse)
+async def check_out(request: CheckOutRequest, current_user: User = Depends(get_current_user)):
     user_id = current_user.id
     name = request.name
-    away=request.away
-    away_time=request.away_time
-    success=checking.check_out(away=away,away_time=away_time,name=name,user_id=user_id)
+    away = request.away
+    away_time = request.away_time
+    success = checking.check_out(away=away, away_time=away_time, name=name, user_id=user_id)
     if away:
         return CheckOutResponse(
             success=success,
             name=name,
-            message=f"用户{name}暂时离场，超过{away_time}时将重新计费！",
+            message=f"用户{name}暂时离场，超过{away_time}分钟将自动签退！",
             online_time=None
         )
     else:
         return CheckOutResponse(
             success=success,
             name=name,
-            message=f"",
-            online_time=checking.calculate_online_time(name,user_id)
-            )
+            message="签退成功",
+            online_time=0
+        )
 
 @router.post("/pay",response_class=FileResponse)
 async def put_QRcode(request:PutQRcodeRequest,current_user:User=Depends(get_current_user)):
@@ -72,3 +73,10 @@ async def put_QRcode(request:PutQRcodeRequest,current_user:User=Depends(get_curr
     online_time=request.online_time
     QRcode_path=checking_service.drawing_costQRcode(name=name,online_time=online_time)
     return FileResponse(str(QRcode_path))
+
+@router.post("/status",response_model=FaceStatusResponse)
+async def get_face_status(request: FaceStatusRequest, current_user: User = Depends(get_current_user)):
+    """查询单个人脸的在线与暂离状态"""
+    from app.core.checking import checking
+    status = checking.get_status(name=request.name, user_id=current_user.id)
+    return status

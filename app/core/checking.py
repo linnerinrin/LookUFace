@@ -28,59 +28,80 @@ class Checking:
         return SessionLocal()
 
     def check_in(self, name: str, user_id: int = None):
-        "签到 检测到人脸 设置在线"
         db = self._get_db()
         try:
             face = db.query(UserFace).filter_by(
                 user_id=user_id, name=name
             ).first()
-            if face and not face.is_online:
+
+            if not face:
+                return False
+            if not face.is_online:
                 face.is_online = True
+                face.is_away = False
+                face.checkin_time = datetime.datetime.now()
+                db.commit()
+                return True
+            elif face.is_away:
+                # 暂离归来
+                face.is_away = False
                 db.commit()
                 return True
             else:
-                raise AttributeError
-        except AttributeError as e:
-            print(f"{name}出现异常行为")
+                return False
+        except Exception as e:
+            print(f"签到异常: {e}")
+            return False
         finally:
             db.close()
 
     def check_out(self, away: bool, away_time: int, name: str, user_id: int = None):
-        "签退 检测到人脸 设置离线"
         db = self._get_db()
         try:
             face = db.query(UserFace).filter_by(
                 user_id=user_id, name=name
             ).first()
-            if face and face.is_online:
-                if away: face.checkin_time += away_time
-                face.is_online = False
-                db.commit()
-                return True
+            if not face:
+                return False
+
+            if away:
+                if face.is_online and not face.is_away:
+                    face.is_away = True
+                    if away_time:
+                        face.checkin_time += datetime.timedelta(minutes=away_time)
+                    db.commit()
+                    return True
             else:
-                raise AttributeError
-        except AttributeError as e:
-            print(f"{name}出现异常行为")
+                if face.is_online and face.checkin_time is not None:
+                    now = datetime.datetime.now()
+                    delta = now - face.checkin_time
+                    minutes = int(delta.total_seconds() / 60)
+                    face.online_time = (face.online_time or 0) + minutes
+
+                    face.is_online = False
+                    face.is_away = False
+                    face.checkin_time = None
+                    db.commit()
+                    return True
+            return False
         finally:
             db.close()
 
-
-    def calculate_online_time(self,name:str,user_id:int=None):
-        """通过datetime.now()-当前脸的checkin_time 计算在线时间"""
-        db=self._get_db()
+    def get_status(self, name: str, user_id: int = None):
+        """查询当前人脸状态"""
+        db = self._get_db()
         try:
             face = db.query(UserFace).filter_by(
                 user_id=user_id, name=name
             ).first()
-            online_time=datetime.datetime.now()-face.checkin_time
-            face.online_time+=online_time
-            face.checkin_time=0
-            db.commit()
+            if not face:
+                return {"is_online": False, "is_away": False}
+            return {
+                "is_online": face.is_online,
+                "is_away": face.is_away
+            }
         finally:
             db.close()
-        return online_time
-
-
 
 
 checking=Checking()

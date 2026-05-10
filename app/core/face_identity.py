@@ -10,7 +10,7 @@ register_from_image_with_screenshot 注册人脸
 recognize( 识别人脸
 
 """
-
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -165,7 +165,9 @@ class FaceIdentity:
             return [{
                 "name": f.name,
                 "screenshot": f.screenshot,
-                "register_time": f.created_at.isoformat()
+                "register_time": f.created_at.isoformat(),
+                "is_online":f.is_online,
+                "checkin_time":f.checkin_time.isoformat() if f.checkin_time else None
             } for f in faces]
         finally:
             db.close()
@@ -217,5 +219,43 @@ class FaceIdentity:
         finally:
             db.close()
 
+    def modify_face(self, user_id, old_name, new_name=None, register_time=None, is_online=None):
+        db = self._get_db()
+        try:
+            face = db.query(UserFace).filter_by(user_id=user_id, name=old_name).first()
+            if not face:
+                return False
+
+            if new_name and new_name != old_name:
+                # 检查新名字是否重名
+                dup = db.query(UserFace).filter_by(user_id=user_id, name=new_name).first()
+                if dup:
+                    return False
+                face.name = new_name
+
+            if register_time:
+                face.created_at = datetime.fromisoformat(register_time)
+
+            if is_online is not None:
+                face.is_online = is_online
+
+            db.commit()
+            return True
+        except Exception:
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
+    def get_online_count(self, user_id: int = None) -> int:
+        """获取当前在线人数"""
+        db = self._get_db()
+        try:
+            query = db.query(UserFace).filter_by(is_online=True)
+            if user_id is not None:
+                query = query.filter_by(user_id=user_id)
+            return query.count()
+        finally:
+            db.close()
 
 face_identity = FaceIdentity()

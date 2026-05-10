@@ -59,7 +59,8 @@ class UserFace(Base):
     created_at = Column(DateTime, default=datetime.now)
     online_time=Column(Integer, default=0) #总登入时间
     is_online= Column(Boolean,default=False)
-    checkin_time=Column(Integer, default=0) #登入当前时间
+    is_away = Column(Boolean, default=False)
+    checkin_time = Column(DateTime, nullable=True) #登入当前时间
 
     # 同一用户下名称唯一，不同用户可以有同名
     __table_args__ = (

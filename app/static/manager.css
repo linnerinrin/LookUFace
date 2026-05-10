@@ -692,3 +692,141 @@ body.dark .auth-modal .modal-content {
     white-space: nowrap;
     min-width: 100px;
 }
+
+.modal-body img {
+    transform: scaleX(-1);
+}
+
+/* ========== 修改信息弹窗样式（复用认证框样式） ========== */
+#modifyModal .modal-content {
+    max-width: 450px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+}
+
+body.dark #modifyModal .modal-content {
+    background: rgba(30, 30, 50, 0.95);
+}
+
+#modifyModal .form-group {
+    margin-bottom: 16px;
+}
+
+#modifyModal .form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+#modifyModal .auth-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--input-border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+#modifyModal .auth-input:focus {
+    outline: none;
+    border-color: #4a90e2;
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+}
+
+#modifyModal .btn-block {
+    width: 100%;
+    justify-content: center;
+    margin-top: 8px;
+}
+
+.btn-checkin {
+    background: #4caf50;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-checkin:hover {
+    background: #388e3c;
+    transform: translateY(-1px);
+}
+
+/* ========== 签退按钮 ========== */
+.btn-checkout {
+    background: #ff9800;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-checkout:hover {
+    background: #f57c00;
+    transform: translateY(-1px);
+}
+
+/* ========== 签到确认弹窗 ========== */
+#checkinConfirmModal .modal-content,
+#checkoutModal .modal-content {
+    max-width: 420px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+}
+
+body.dark #checkinConfirmModal .modal-content,
+body.dark #checkoutModal .modal-content {
+    background: rgba(30, 30, 50, 0.95);
+}
+
+#checkoutModal .form-group {
+    margin-bottom: 16px;
+}
+
+#checkoutModal .form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+#checkoutModal .auth-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--input-border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.btn-modify {
+    background: #ff9800;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-modify:hover {
+    background: #f57c00;
+    transform: translateY(-1px);
+}

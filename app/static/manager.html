@@ -21,6 +21,9 @@
                 <a href="manager.html" class="nav-item active">
                     <span>仓库管理</span>
                 </a>
+                <a href="console.html" class="nav-item">
+                    <span>控制台</span>
+                </a>
                 <a href="account.html" class="nav-item">
                     <span>账号管理</span>
                 </a>
@@ -40,12 +43,15 @@
         </aside>
 
         <main class="main-content">
-            <header class="top-bar">
-                <h1>仓库管理</h1>
-                <div class="header-actions">
-                    <button id="refreshBtn" class="btn btn-outline">
-                        <span>刷新</span>
-                    </button>
+                <header class="top-bar">
+                    <h1>仓库管理</h1>
+                    <div class="header-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button class="btn btn-outline" onclick="currentSort='default'; renderFaces(facesData);">默认</button>
+                        <button class="btn btn-outline" onclick="currentSort='name'; renderFaces(facesData);">按姓名</button>
+                        <button class="btn btn-outline" onclick="currentSort='online'; renderFaces(facesData);">按在线</button>
+                        <button class="btn btn-outline" onclick="currentSort='duration'; renderFaces(facesData);">按时长</button>
+                        <button class="btn btn-outline" onclick="exportToExcel()">导出 Excel</button>
+                        <button id="refreshBtn" class="btn btn-outline">刷新</button>
                 </div>
             </header>
 
@@ -55,6 +61,11 @@
                     <div class="stat-info">
                         <span class="stat-value" id="totalCount">0</span>
                         <span class="stat-label">已注册人脸</span>
+                    </div>
+                    <div class="stat-icon" style="background: linear-gradient(135deg, rgba(76,175,80,0.2) 0%, rgba(76,175,80,0.1) 100%);">🟢</div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="onlineCount">0</span>
+                        <span class="stat-label">当前在线</span>
                     </div>
                 </div>
             </div>
@@ -91,6 +102,80 @@
                 <button class="modal-close" onclick="closeAuthModal()">&times;</button>
             </div>
             <div class="modal-body" id="authBody"></div>
+        </div>
+    </div>
+
+
+    <div id="modifyModal" class="modal" style="display: none;">
+        <div class="modal-content auth-content" style="max-width: 450px;">
+            <div class="modal-header">
+                <h3>修改信息</h3>
+                <button class="modal-close" onclick="closeModifyModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>名字</label>
+                    <input type="text" id="modifyName" class="auth-input" placeholder="输入新名字" maxlength="20">
+                </div>
+                <div class="form-group">
+                    <label>注册时间</label>
+                    <input type="datetime-local" id="modifyRegisterTime" class="auth-input">
+                </div>
+                <div class="form-group">
+                    <label>重新上传人脸图片（可选）</label>
+                    <input type="file" id="modifyImage" class="auth-input" accept="image/*">
+                </div>
+                <button class="btn btn-primary btn-block" onclick="confirmModify()">保存修改</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="checkinConfirmModal" class="modal" style="display: none;">
+        <div class="modal-content auth-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>手动签到</h3>
+                <button class="modal-close" onclick="closeCheckinConfirmModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-primary); margin-bottom: 20px;">
+                    确认对 <strong id="checkinTargetName"></strong> 进行手动签到？
+                </p>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn btn-outline" onclick="closeCheckinConfirmModal()">取消</button>
+                    <button class="btn btn-primary" id="confirmCheckinBtn">确认签到</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="checkoutModal" class="modal" style="display: none;">
+        <div class="modal-content auth-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3>手动签退</h3>
+                <button class="modal-close" onclick="closeCheckoutModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>签到时间</label>
+                    <input type="text" id="checkoutCheckinTime" class="auth-input" disabled>
+                </div>
+                <div class="form-group">
+                    <label for="checkoutDuration">本次在线时长（分钟）</label>
+                    <input type="number" id="checkoutDuration" class="auth-input" min="1" value="60">
+                </div>
+                <div class="form-group">
+                    <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="checkoutAway"> 暂离（不结算，仅标记离开）
+                    </label>
+                </div>
+                <p style="color: var(--text-secondary); font-size: 12px; margin-bottom: 16px;">
+                    系统计算时长仅供参考，可手动修改
+                </p>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn btn-outline" onclick="closeCheckoutModal()">取消</button>
+                    <button class="btn btn-primary" id="confirmCheckoutBtn">确认签退</button>
+                </div>
+            </div>
         </div>
     </div>
 

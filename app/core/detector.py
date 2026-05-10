@@ -1,9 +1,6 @@
 """
 app/core/detector.py
 人脸检测器（OpenCV DNN）
-- 使用 OpenCV 预训练模型检测人脸
-- 返回边界框坐标列表
-- 基底模型 检测脸显示并给后边的模型用
 """
 
 import cv2

@@ -5,7 +5,7 @@ Faceinfo 人脸信息
 """
 
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime
 
 
@@ -62,3 +62,26 @@ class DeleteFaceResponse(BaseModel):
     success: bool
     name: str
 
+class ModifyFaceRequest(BaseModel):
+    old_name: str
+    new_name: Optional[str] = None
+    register_time: Optional[str] = None
+    is_online: Optional[bool] = None
+
+class ModifyFaceResponse(BaseModel):
+    success: bool
+    message: str
+
+class FrontendLogRequest(BaseModel):
+    level: str
+    message: str
+    page: str
+class FrontendLogResponse(BaseModel):
+    ok: bool
+
+class GetLogsRequest(BaseModel):
+    lines: int
+    level: str
+    date: str
+class GetLogsResponse(BaseModel):
+    logs: List[str]

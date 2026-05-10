@@ -3,7 +3,7 @@
 主要API路由
 run_sync_analysis() 异步处理face_service的analysis.py
 health_check() 健康检测
-websocket_camera() 开启websocket摄像流
+websocket_camera() 开启websocket摄像流 两个
 register_face() 注册人脸 并从token中绑定账户
 list_faces_with_screenshots() 从token中获取账户 并获得截图列表
 delete_face() 获取账户 删除人脸
@@ -22,12 +22,15 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Form, WebSocket,
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer
 
-from app.api.schemas import DetectResponse, HealthResponse, DeleteFaceResponse, FaceRegisterResponse, FacesListResponse,DeleteFaceRequest, GetScreenshotRequest
+from app.api.schemas import DetectResponse, HealthResponse, DeleteFaceResponse, FaceRegisterResponse, FacesListResponse, \
+    DeleteFaceRequest, GetScreenshotRequest, ModifyFaceResponse, ModifyFaceRequest, FrontendLogRequest, \
+    FrontendLogResponse,GetLogsRequest,GetLogsResponse
 from app.auth.routes import get_current_user
 from app.core.face_identity import face_identity
 from app.services.face_service import face_service
 from app.database import User
 from app.config import settings
+from app.logger import ws_log_handler, logger
 
 #创建路由器 后续接口都在这里注册
 router = APIRouter()
@@ -102,6 +105,44 @@ async def websocket_camera(websocket: WebSocket):
     except WebSocketDisconnect:
         print("WebSocket 客户端已断开")
 
+@router.websocket("/ws/camera-exit")
+async def websocket_camera(websocket: WebSocket):
+    """WebSocket 实时摄像头分析"""
+    await websocket.accept()
+    print("WebSocket 客户端已连接")
+
+    try:
+        while True:
+            try:
+                message = await websocket.receive()
+            except RuntimeError as e:
+                print(f"WebSocket 接收异常: {e}")
+                break
+            except WebSocketDisconnect:
+                print("WebSocket 客户端已断开")
+                break
+
+            if "bytes" in message:
+                nparr = np.frombuffer(message["bytes"], np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                if frame is None:
+                    continue
+
+            #数据拿去分析
+                result = await run_sync_analysis(frame, detect_gender_age=True)
+                faces_data = [f.dict() for f in result.faces]
+
+
+            #返回分析结果
+                await websocket.send_json({
+                    "success": True,
+                    "face_count": result.face_count,
+                    "faces": faces_data,
+                    "processing_ms": result.processing_ms
+                })
+    except WebSocketDisconnect:
+        print("WebSocket 客户端已断开")
 
 @router.post("/face/register",response_model=FaceRegisterResponse)
 async def register_face(
@@ -189,5 +230,75 @@ async def get_face_screenshot(request:GetScreenshotRequest, current_user:User=De
     return FileResponse(str(screenshot_path))
 
 
+@router.put("/face/modify", response_model=ModifyFaceResponse)
+async def modify_face(
+    request: ModifyFaceRequest,
+    current_user: User = Depends(get_current_user)
+):
+    success = face_identity.modify_face(
+        user_id=current_user.id,
+        old_name=request.old_name,
+        new_name=request.new_name,
+        register_time=request.register_time,
+        is_online=request.is_online
+    )
+    return ModifyFaceResponse(
+        success=success,
+        message="修改成功" if success else "修改失败"
+    )
 
-#@router.post("")
+
+@router.websocket("/ws/log")
+async def websocket_log(websocket: WebSocket):
+    """控制台日志实时推送"""
+    await websocket.accept()
+    if ws_log_handler:
+        ws_log_handler.add_ws(websocket)
+    logger.info("控制台客户端已连接")
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if ws_log_handler:
+            ws_log_handler.remove_ws(websocket)
+        logger.info("控制台客户端已断开")
+
+@router.post("/frontend-log",response_model=FrontendLogResponse)
+async def frontend_log(request: FrontendLogRequest):
+    from app.logger import logger
+    msg = f"[前端 {request.page}] {request.message}"
+    if request.level == 'error':
+        logger.error(msg)
+    elif request.level == 'warn':
+        logger.warning(msg)
+    else:
+        logger.info(msg)
+    return FrontendLogResponse(ok=True)
+
+@router.post("/logs/recent",response_model=GetLogsResponse)
+async def get_recent_logs(request:GetLogsRequest):
+    """获取最近 N 行日志，支持按级别和日期筛选"""
+    lines = request.lines
+    level = request.level.lower()
+    date = request.date
+
+    if date:
+        log_file = Path("logs") / f"app_{date}.log"
+    else:
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_file = Path("logs") / f"app_{today}.log"
+
+    if not log_file.exists():
+        return GetLogsResponse(logs=[])
+
+    with open(log_file, "r", encoding="utf-8") as f:
+        all_lines = f.readlines()
+
+    if level != "all":
+        all_lines = [l for l in all_lines if f"[{level.upper()}]" in l]
+
+    recent = all_lines[-lines:] if len(all_lines) > lines else all_lines
+    return GetLogsResponse(logs=[line.strip() for line in recent])

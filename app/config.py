@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     MODEL_DIR: Path = BASE_DIR / "models" #模型目录
     FACE_PROTO: str = "opencv_face_detector.pbtxt"
     FACE_MODEL: str = "opencv_face_detector_uint8.pb"
-    AGE_PROTO: str = "deploy_age.prototxt"
+    AGE_PROTO: str = "age_deploy.prototxt"
     AGE_MODEL: str = "age_net.caffemodel"
-    GENDER_PROTO: str = "deploy_gender.prototxt"
+    GENDER_PROTO: str = "gender_deploy.prototxt"
     GENDER_MODEL: str = "gender_net.caffemodel"
 
     #并发
@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     TRACKING_CONFIDENCE:float
     CHECKIN_REQUEST_TIME: int=30
     CHECKOUT_REQUEST_TIME: int=30
+    DELETE_REQUIRE_TIME: int=5000
 
     @property #接下来6个都是模型路径
     def face_proto_path(self) -> Path:

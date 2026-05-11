@@ -9,6 +9,7 @@ calculate_online_time 签退后计算在线时长
 import datetime
 
 from app.database import SessionLocal, UserFace
+from app.logger import logger
 
 
 class Checking:
@@ -50,7 +51,7 @@ class Checking:
             else:
                 return False
         except Exception as e:
-            print(f"签到异常: {e}")
+            logger.error(f"签到异常：{e}", exc_info=True)
             return False
         finally:
             db.close()
@@ -83,6 +84,8 @@ class Checking:
                     face.checkin_time = None
                     db.commit()
                     return True
+        except Exception as e:
+            logger.error(f"签退异常: {e}", exc_info=True)
             return False
         finally:
             db.close()

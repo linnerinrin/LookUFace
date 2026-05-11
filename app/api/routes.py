@@ -70,17 +70,17 @@ async def health_check():
 async def websocket_camera(websocket: WebSocket):
     """WebSocket 实时摄像头分析"""
     await websocket.accept()
-    print("WebSocket 客户端已连接")
+    logger.info("入口摄像头已连接")
 
     try:
         while True:
             try:
                 message = await websocket.receive()
             except RuntimeError as e:
-                print(f"WebSocket 接收异常: {e}")
+                logger.warning("入口摄像头客户端已断开"+str(e))
                 break
             except WebSocketDisconnect:
-                print("WebSocket 客户端已断开")
+                logger.info("入口摄像头已断开")
                 break
 
             if "bytes" in message:
@@ -103,23 +103,23 @@ async def websocket_camera(websocket: WebSocket):
                     "processing_ms": result.processing_ms
                 })
     except WebSocketDisconnect:
-        print("WebSocket 客户端已断开")
+        logger.info("入口摄像头已断开")
 
 @router.websocket("/ws/camera-exit")
 async def websocket_camera(websocket: WebSocket):
     """WebSocket 实时摄像头分析"""
     await websocket.accept()
-    print("WebSocket 客户端已连接")
+    logger.info("出口摄像头已连接")
 
     try:
         while True:
             try:
                 message = await websocket.receive()
             except RuntimeError as e:
-                print(f"WebSocket 接收异常: {e}")
+                logger.warning("出口摄像头客户端已断开"+str(e))
                 break
             except WebSocketDisconnect:
-                print("WebSocket 客户端已断开")
+                logger.info("出口摄像头已断开")
                 break
 
             if "bytes" in message:
@@ -142,7 +142,7 @@ async def websocket_camera(websocket: WebSocket):
                     "processing_ms": result.processing_ms
                 })
     except WebSocketDisconnect:
-        print("WebSocket 客户端已断开")
+        logger.info("出口摄像头已断开")
 
 @router.post("/face/register",response_model=FaceRegisterResponse)
 async def register_face(

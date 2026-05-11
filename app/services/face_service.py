@@ -15,6 +15,7 @@ from app.core.detector import  face_detector
 from app.core.models import  gender_age_model
 from app.core.face_identity import face_identity
 from app.api.schemas import FaceInfo, DetectResponse
+from app.logger import logger
 
 
 class FaceAnalysisService:
@@ -74,7 +75,7 @@ class FaceAnalysisService:
             result = face_identity.recognize(face_roi)
             return result.get("name", "Unknown"), result.get("confidence", 0.0)
         except Exception as e:
-            print(f"身份识别失败: {e}")
+            logger.warning("识别失败",exc_info=True)
             return ("Unknown", 0.0)
 
 

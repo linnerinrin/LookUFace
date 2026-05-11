@@ -19,7 +19,7 @@ from email.mime.text import MIMEText
 from sqlalchemy.orm import Session
 from app.database import VerificationCode, SessionLocal
 from app.config import settings
-
+from app.logger import logger
 
 SMTP_HOST = settings.SMTP_HOST
 SMTP_PORT = settings.SMTP_PORT
@@ -43,10 +43,10 @@ class EmailService:
             server.send_message(msg)#发送邮件
             server.quit()
 
-            print(f"邮件已发送到 {to_email}")
+            logger.info(f"邮件已发送到 {to_email}")
             return True
         except Exception as e:
-            print(f"发送邮件失败: {e}")
+            logger.error(f"发送邮件失败: {e}",exc_info= True)
             return False
 
 
@@ -109,10 +109,10 @@ class EmailService:
             verification.used = True
             db.delete(verification)
             db.commit()
-            print(f"验证码验证成功: {email}")
+            logger.info(f"验证码验证成功: {email}")
             return True
 
-        print(f"验证码验证失败: {email}, code={code}")
+        logger.error(f"验证码验证失败: {email}",exc_info=True)
         return False
 
 async def cleanup_expired_codes():

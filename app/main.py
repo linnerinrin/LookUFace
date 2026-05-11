@@ -11,6 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
 
 from app.auth.routes import router as auth_router
@@ -18,6 +20,7 @@ from app.check.routes import router as check_router
 from app.api.routes import router
 from app.config import settings
 from app.database import Base, engine
+from app.logger import logger
 from app.services.email_service import cleanup_expired_codes
 
 
@@ -52,6 +55,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error(f"{str(exc)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail":str(exc)}
+        )
+
+
     app.include_router(router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(check_router, prefix="/api/v1")
@@ -69,10 +82,12 @@ if __name__ == "__main__":
     import threading
 
     def open_browser():
-        webbrowser.open("http://localhost:8000/idx.html")
+        try:
+            webbrowser.open("http://localhost:8000/idx.html")
+        except:
+            raise Exception("未检测到html文件或未打开浏览器，请于app/static/处检查文件完整性")
 
-
-    threading.Timer(2, open_browser).start()  # 等 2 秒后打开
+    threading.Timer(2, open_browser).start()
 
     uvicorn.run(
         "app.main:app",

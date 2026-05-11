@@ -21,6 +21,7 @@ from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 from app.config import settings
 from app.database import SessionLocal, UserFace
+from app.logger import logger
 
 
 class FaceIdentity:
@@ -43,7 +44,7 @@ class FaceIdentity:
             min_detection_confidence=settings.DETECTION_CONFIDENCE,
             min_tracking_confidence=settings.TRACKING_CONFIDENCE
         )
-        print("人脸识别模块初始化完成（数据库存储）")
+        logger.info(f"识别模块初始化完成")
 
     def _get_db(self):
         """获取数据库会话"""
@@ -68,14 +69,14 @@ class FaceIdentity:
         if image is None or image.size == 0:
             return False
         if user_id is None:
-            print("注册失败: 未提供 user_id")
+            logger.warning("注册失败: 未提供 user_id")
             return False
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(rgb)
 
         if not results.multi_face_landmarks:
-            print(f"注册失败: 未检测到人脸")
+            logger.warning("注册失败: 未检测到人脸")
             return False
 
         features = self._extract_features(results.multi_face_landmarks[0].landmark)
@@ -90,7 +91,7 @@ class FaceIdentity:
                 # 更新已有记录
                 existing.features = pickle.dumps(features)
                 existing.screenshot = screenshot_path
-                print(f"更新人脸: {name} (user_id={user_id})")
+                logger.info(f"更新人脸: {name} (user_id={user_id})")
             else:
                 # 新建记录
                 face_record = UserFace(
@@ -100,13 +101,13 @@ class FaceIdentity:
                     screenshot=screenshot_path
                 )
                 db.add(face_record)
-                print(f"注册成功: {name} (user_id={user_id})")
+                logger.info(f"注册成功: {name} (user_id={user_id})")
 
             db.commit()
             return True
         except Exception as e:
             db.rollback()
-            print(f"注册失败: {e}")
+            logger.info(f"注册失败: {e}")
             return False
         finally:
             db.close()
@@ -200,8 +201,7 @@ class FaceIdentity:
 
             if not face:
                 return False
-            print(f"准备删除截图: {face.screenshot}")
-            print(f"文件是否存在: {Path(face.screenshot).exists()}")
+            logger.info(f"准备删除截图: {face.screenshot}")
             # 删除截图文件
             if face.screenshot and Path(face.screenshot).exists():
                 try:
@@ -214,7 +214,7 @@ class FaceIdentity:
             return True
         except Exception as e:
             db.rollback()
-            print(f"删除失败: {e}")
+            logger.error("删除失败",exc_info=True)
             return False
         finally:
             db.close()
@@ -241,7 +241,8 @@ class FaceIdentity:
 
             db.commit()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error("修改失败", exc_info=True)
             db.rollback()
             return False
         finally:

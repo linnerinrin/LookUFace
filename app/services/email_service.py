@@ -21,25 +21,22 @@ from app.database import VerificationCode, SessionLocal
 from app.config import settings
 from app.logger import logger
 
-SMTP_HOST = settings.SMTP_HOST
-SMTP_PORT = settings.SMTP_PORT
-SMTP_USER = settings.SMTP_USER
-SMTP_PASSWORD = settings.SMTP_PASSWORD
+
 
 class EmailService:
     def send_email_sync(self,to_email: str, subject: str, body: str) -> bool:
         """同步发送邮件"""
         try:
             msg = MIMEMultipart()
-            msg['From'] = SMTP_USER
+            msg['From'] = settings.SMTP_USER
             msg['To'] = to_email
             msg['Subject'] = Header(subject, 'utf-8')
             msg.attach(MIMEText(body, 'html', 'utf-8'))
 
             #连接邮件服务器
-            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
             server.starttls() #加密传输
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.send_message(msg)#发送邮件
             server.quit()
 

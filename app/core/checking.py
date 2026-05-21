@@ -3,7 +3,7 @@
 签到计费核心模块
 check_in 签到
 check_out 签退或暂离
-calculate_online_time 签退后计算在线时长
+get_status 查询当前人脸状态
 """
 
 import datetime
@@ -44,7 +44,6 @@ class Checking:
                 db.commit()
                 return True
             elif face.is_away:
-                # 暂离归来
                 face.is_away = False
                 db.commit()
                 return True
@@ -78,7 +77,6 @@ class Checking:
                     delta = now - face.checkin_time
                     minutes = int(delta.total_seconds() / 60)
                     face.online_time = (face.online_time or 0) + minutes
-
                     face.is_online = False
                     face.is_away = False
                     face.checkin_time = None
@@ -103,6 +101,10 @@ class Checking:
                 "is_online": face.is_online,
                 "is_away": face.is_away
             }
+        except Exception as e:
+            # [优化] 原有代码缺少异常处理，数据库查询失败时异常会直接传播到调用方
+            logger.error(f"查询状态异常: {e}", exc_info=True)
+            return {"is_online": False, "is_away": False}
         finally:
             db.close()
 

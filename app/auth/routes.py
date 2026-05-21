@@ -22,6 +22,7 @@ from app.auth.schemas import SendCodeRequest, RegisterRequest, ResetPasswordRequ
 from app.database import get_db, User
 from app.core.auth import verify_password, get_password_hash, create_access_token, decode_token
 from app.services.email_service import email_service
+from app.logger import logger
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 security = HTTPBearer()
@@ -57,6 +58,7 @@ async def send_code(request: SendCodeRequest, db: Session = Depends(get_db)):
 
     success = await email_service.send_verification_code(db, request.email, request.type)
     if success:
+        logger.info(f"验证码已发送至 {request.email}（类型: {request.type}）")
         return SendCodeResponse(
             success=True,
             message="验证码已发送")
@@ -89,6 +91,8 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
 
     token = create_access_token({"user_id": user.id, "email": user.email})
 
+    logger.info(f"新用户注册: {user.email}（昵称: {nickname}）")
+
     return RegisterResponse(
         success=True,
         token=token,
@@ -111,6 +115,8 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     token = create_access_token({"user_id": user.id, "email": user.email})
 
+    logger.info(f"用户登录: {user.email}")
+
     return LoginResponse(
         success=True,
         token=token,
@@ -131,6 +137,8 @@ async def reset_password(request: ResetPasswordRequest, db: Session = Depends(ge
     user.password_hash = get_password_hash(request.new_password)
     user.updated_at = datetime.now()
     db.commit()
+
+    logger.info(f"密码已重置: {request.email}")
 
     return ResetPasswordResponse(
         success=True,
@@ -158,6 +166,8 @@ async def update_profile(
     current_user.updated_at = datetime.now()
     db.commit()
 
+    logger.info(f"用户 {current_user.email} 更新了个人信息")
+
     return UpdateProfileResponse(
         success=True,
         user=current_user
@@ -177,6 +187,8 @@ async def change_password(
     current_user.password_hash = get_password_hash(request.new_password)
     current_user.updated_at = datetime.now()
     db.commit()
+
+    logger.info(f"用户 {current_user.email} 修改了密码")
 
     return ChangePasswordResponse(
         success=True,

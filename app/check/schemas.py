@@ -15,7 +15,7 @@ class CheckInResponse(BaseModel):
     name: str
     message: str
     response_times: int
-    delete_require_time: int
+    delete_require_time: int = 0
 
 class CheckOutRequest(BaseModel):
     away: bool

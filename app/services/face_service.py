@@ -47,7 +47,7 @@ class FaceAnalysisService:
         )
 
     def _analyze_single_face(self, image, bbox, detect_gender_age, detect_identity):
-        """分析单张人脸，返回 FaceInfo"""
+        """分析单张人脸，返回FaceInfo"""
         x1, y1, x2, y2 = bbox
         face_roi = image[y1:y2, x1:x2]
 

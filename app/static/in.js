@@ -160,7 +160,7 @@ async function updateResults(data) {
                     <p>置信度: ${(face.confidence * 100).toFixed(1)}%</p>
                 </div>
             `;
-            // 签到逻辑
+            //签到逻辑
             if (isKnown) {
                 const faceName = face.identity;
                 if (!checkintimes[faceName]) {
@@ -265,7 +265,6 @@ async function connect() {
     if (!cameraStarted) return;
     ws = new WebSocket(WS_URL);
     ws.onopen = () => {
-        console.log('入口 WebSocket 已连接');
         isRunning = true;
         startCaptureLoop();
         recordBtn.disabled = false;

@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from typing import List, Tuple
 from app.config import settings
+from app.logger import logger
 
 
 class FaceDetector:
@@ -21,11 +22,17 @@ class FaceDetector:
 
     def _initialize(self):
         """加载模型"""
-        self.net = cv2.dnn.readNet(
-            str(settings.face_model_path),
-            str(settings.face_proto_path)
-        )
-        self.conf_threshold = settings.FACE_CONF_THRESHOLD
+        try:
+            self.net = cv2.dnn.readNet(
+                str(settings.face_model_path),
+                str(settings.face_proto_path)
+            )
+            self.conf_threshold = settings.FACE_CONF_THRESHOLD
+            logger.info("人脸检测模型加载成功")
+        except Exception as e:
+            # [优化] 原有代码缺少异常处理，模型文件缺失或损坏时静默崩溃
+            logger.error(f"人脸检测模型加载失败: {e}", exc_info=True)
+            raise
 
     def detect(self, frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """检测人脸，返回 [(x1, y1, x2, y2), ...]"""

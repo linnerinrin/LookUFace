@@ -28,8 +28,15 @@ class Settings(BaseSettings):
     GENDER_PROTO: str = "gender_deploy.prototxt"
     GENDER_MODEL: str = "gender_net.caffemodel"
 
+    #CORS（逗号分隔，生产环境设为具体前端域名）
+    ALLOWED_ORIGINS: str = "*"
+
     #并发
     MAX_WORKERS: int = 4
+
+    #日志
+    LOG_DIR: Path = BASE_DIR / "logs"
+    LOG_LEVEL: str = "INFO"
 
     #存储
     UPLOAD_DIR: Path = BASE_DIR / "uploads"

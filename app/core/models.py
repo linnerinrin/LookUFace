@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from typing import Tuple
 from app.config import settings
+from app.logger import logger
 
 
 class GenderAgeModel:
@@ -21,16 +22,22 @@ class GenderAgeModel:
 
     def _initialize(self):
         """加载模型"""
-        self.gender_net = cv2.dnn.readNet(
-            str(settings.gender_model_path),
-            str(settings.gender_proto_path)
-        )
-        self.age_net = cv2.dnn.readNet(
-            str(settings.age_model_path),
-            str(settings.age_proto_path)
-        )
-        self.gender_list = ["Male", "Female"]
-        self.age_list = ["0-4", "4-8", "8-12", "12-20", "20-38", "38-48", "48-60", "60+"]
+        try:
+            self.gender_net = cv2.dnn.readNet(
+                str(settings.gender_model_path),
+                str(settings.gender_proto_path)
+            )
+            self.age_net = cv2.dnn.readNet(
+                str(settings.age_model_path),
+                str(settings.age_proto_path)
+            )
+            self.gender_list = ["Male", "Female"]
+            self.age_list = ["0-4", "4-8", "8-12", "12-20", "20-38", "38-48", "48-60", "60+"]
+            logger.info("性别年龄模型加载成功")
+        except Exception as e:
+            # [优化] 原有代码缺少异常处理，模型文件缺失或损坏时静默崩溃
+            logger.error(f"性别年龄模型加载失败: {e}", exc_info=True)
+            raise
 
     def predict(self, face: np.ndarray) -> Tuple[str, str, float]:
         """预测性别和年龄，返回 (gender, age, confidence)

@@ -1,14 +1,16 @@
 """
 app/core/face_identity.py
 人脸识别核心模块（MediaPipe）
-__new__单例初始化
-_intialize 初始化 加载数据库 mediapipe模型
-_extract_features 将预测结果展平为向量
-_load_db 加载已注册人脸
-_save_db 保存已注册人脸
-register_from_image_with_screenshot 注册人脸
-recognize( 识别人脸
-
+__new__ 单例初始化
+_initialize 初始化 mediapipe 模型
+_extract_features 将 468 个关键点展平为特征向量
+register_from_image_with_screenshot 注册人脸（含截图路径绑定）
+recognize 识别人脸（余弦相似度匹配）
+get_all_faces_with_screenshots 获取当前用户所有人脸信息
+get_screenshot_path 获取人脸截图路径
+delete_face 删除人脸
+modify_face 修改人脸信息
+get_online_count 获取当前在线人数
 """
 from datetime import datetime
 
@@ -36,15 +38,20 @@ class FaceIdentity:
 
     def _initialize(self):
         """初始化 MediaPipe 模型"""
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            static_image_mode=True,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=settings.DETECTION_CONFIDENCE,
-            min_tracking_confidence=settings.TRACKING_CONFIDENCE
-        )
-        logger.info(f"识别模块初始化完成")
+        try:
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                static_image_mode=True,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=settings.DETECTION_CONFIDENCE,
+                min_tracking_confidence=settings.TRACKING_CONFIDENCE
+            )
+            logger.info("识别模块初始化完成")
+        except Exception as e:
+            # [优化] 原有代码缺少异常处理，MediaPipe 初始化失败时静默崩溃
+            logger.error(f"识别模块初始化失败: {e}", exc_info=True)
+            raise
 
     def _get_db(self):
         """获取数据库会话"""
@@ -167,6 +174,7 @@ class FaceIdentity:
                 "name": f.name,
                 "screenshot": f.screenshot,
                 "register_time": f.created_at.isoformat(),
+                "online_time":f.online_time,
                 "is_online":f.is_online,
                 "checkin_time":f.checkin_time.isoformat() if f.checkin_time else None
             } for f in faces]

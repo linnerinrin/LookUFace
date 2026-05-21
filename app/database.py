@@ -14,7 +14,8 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from app.config import settings
 
-DATABASE_URL = settings.DATABASE_URL or "sqlite:///./face_lens.db" #确定地址
+
+DATABASE_URL = settings.DATABASE_URL
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}) #创建引擎 通过此引擎创建的表都存储在url中
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine) #创建会话
 Base = declarative_base() #基类 所有会话继承于他
@@ -25,12 +26,12 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(100), unique=True, nullable=False)      # 邮箱作为登录账号
-    password_hash = Column(String(255), nullable=False)           # 密码哈希
-    nickname = Column(String(50), nullable=True)                  # 昵称（可改，不唯一）
-    avatar = Column(String(255), nullable=True)                   # 头像路径
-    bio = Column(Text, nullable=True)                             # 个人简介
-    face_identity = Column(String(100), nullable=True)            # 关联的人脸名称
+    email = Column(String(100), unique=True, nullable=False)      #邮箱作为登录账号
+    password_hash = Column(String(255), nullable=False)           #密码哈希
+    nickname = Column(String(50), nullable=True)                  #昵称（可改，不唯一）
+    avatar = Column(String(255), nullable=True)                   #头像路径
+    bio = Column(Text, nullable=True)                             #个人简介
+    face_identity = Column(String(100), nullable=True)            #关联的人脸名称
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

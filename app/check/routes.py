@@ -5,7 +5,7 @@ check_in() 签到
 check_out() 签退
 put_QRcode 返回支付二维码给前端
 """
-
+import datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
@@ -17,6 +17,7 @@ from app.config import settings
 from app.core.checking import checking
 from app.services.checking_service import checking_service
 from app.database import User
+from app.logger import logger
 
 router = APIRouter(prefix="/check", tags=["计时缴费"])
 
@@ -26,15 +27,20 @@ async def check_in(request:CheckInRequest,current_user:User=Depends(get_current_
     """签到"""
     user_id = current_user.id
     name = request.name
-    request_times=request.request_times+1
+    request_times=request.request_times
     if request_times<settings.CHECKIN_REQUEST_TIME:
         return CheckInResponse(
             success=False,
             name=name,
             message="",
             response_times=request_times,
+            delete_require_time=settings.DELETE_REQUIRE_TIME
         )
     success=checking.check_in(name=name,user_id=user_id)
+    if success:
+        logger.info(f"签到成功: {name}")
+    else:
+        logger.warning(f"签到失败: {name}（可能已在签到状态）")
     return CheckInResponse(
         success=success,
         name=name,
@@ -51,6 +57,7 @@ async def check_out(request: CheckOutRequest, current_user: User = Depends(get_c
     away_time = request.away_time
     success = checking.check_out(away=away, away_time=away_time, name=name, user_id=user_id)
     if away:
+        logger.info(f"暂离: {name}（{away_time}分钟内返回）")
         return CheckOutResponse(
             success=success,
             name=name,
@@ -58,6 +65,7 @@ async def check_out(request: CheckOutRequest, current_user: User = Depends(get_c
             online_time=None
         )
     else:
+        logger.info(f"签退成功: {name}")
         return CheckOutResponse(
             success=success,
             name=name,
@@ -72,11 +80,11 @@ async def put_QRcode(request:PutQRcodeRequest,current_user:User=Depends(get_curr
     name = request.name
     online_time=request.online_time
     QRcode_path=checking_service.drawing_costQRcode(name=name,online_time=online_time)
+    logger.info(f"生成支付二维码: {name}（在线 {online_time} 分钟）")
     return FileResponse(str(QRcode_path))
 
 @router.post("/status",response_model=FaceStatusResponse)
 async def get_face_status(request: FaceStatusRequest, current_user: User = Depends(get_current_user)):
     """查询单个人脸的在线与暂离状态"""
-    from app.core.checking import checking
     status = checking.get_status(name=request.name, user_id=current_user.id)
     return status

@@ -66,83 +66,52 @@ async def health_check():
     )
 
 
+async def _handle_camera_stream(websocket: WebSocket, camera_label: str):
+    """共享的摄像头 WebSocket 帧处理循环"""
+    await websocket.accept()
+    logger.info(f"{camera_label}摄像头已连接")
+
+    try:
+        while True:
+            try:
+                message = await websocket.receive()
+            except RuntimeError as e:
+                logger.warning(f"{camera_label}摄像头客户端已断开 {e}")
+                break
+            except WebSocketDisconnect:
+                logger.info(f"{camera_label}摄像头已断开")
+                break
+
+            if "bytes" in message:
+                nparr = np.frombuffer(message["bytes"], np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                if frame is None:
+                    continue
+
+                result = await run_sync_analysis(frame, detect_gender_age=True)
+                faces_data = [f.dict() for f in result.faces]
+
+                await websocket.send_json({
+                    "success": True,
+                    "face_count": result.face_count,
+                    "faces": faces_data,
+                    "processing_ms": result.processing_ms
+                })
+    except WebSocketDisconnect:
+        logger.info(f"{camera_label}摄像头已断开")
+
+
 @router.websocket("/ws/camera")
 async def websocket_camera(websocket: WebSocket):
-    """WebSocket 实时摄像头分析"""
-    await websocket.accept()
-    logger.info("入口摄像头已连接")
+    """入口摄像头 WebSocket"""
+    await _handle_camera_stream(websocket, "入口")
 
-    try:
-        while True:
-            try:
-                message = await websocket.receive()
-            except RuntimeError as e:
-                logger.warning("入口摄像头客户端已断开"+str(e))
-                break
-            except WebSocketDisconnect:
-                logger.info("入口摄像头已断开")
-                break
-
-            if "bytes" in message:
-                nparr = np.frombuffer(message["bytes"], np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                if frame is None:
-                    continue
-
-            #数据拿去分析
-                result = await run_sync_analysis(frame, detect_gender_age=True)
-                faces_data = [f.dict() for f in result.faces]
-
-
-            #返回分析结果
-                await websocket.send_json({
-                    "success": True,
-                    "face_count": result.face_count,
-                    "faces": faces_data,
-                    "processing_ms": result.processing_ms
-                })
-    except WebSocketDisconnect:
-        logger.info("入口摄像头已断开")
 
 @router.websocket("/ws/camera-exit")
-async def websocket_camera(websocket: WebSocket):
-    """WebSocket 实时摄像头分析"""
-    await websocket.accept()
-    logger.info("出口摄像头已连接")
-
-    try:
-        while True:
-            try:
-                message = await websocket.receive()
-            except RuntimeError as e:
-                logger.warning("出口摄像头客户端已断开"+str(e))
-                break
-            except WebSocketDisconnect:
-                logger.info("出口摄像头已断开")
-                break
-
-            if "bytes" in message:
-                nparr = np.frombuffer(message["bytes"], np.uint8)
-                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                if frame is None:
-                    continue
-
-            #数据拿去分析
-                result = await run_sync_analysis(frame, detect_gender_age=True)
-                faces_data = [f.dict() for f in result.faces]
-
-
-            #返回分析结果
-                await websocket.send_json({
-                    "success": True,
-                    "face_count": result.face_count,
-                    "faces": faces_data,
-                    "processing_ms": result.processing_ms
-                })
-    except WebSocketDisconnect:
-        logger.info("出口摄像头已断开")
+async def websocket_camera_exit(websocket: WebSocket):
+    """出口摄像头 WebSocket"""
+    await _handle_camera_stream(websocket, "出口")
 
 @router.post("/face/register",response_model=FaceRegisterResponse)
 async def register_face(
@@ -179,6 +148,8 @@ async def register_face(
         image, name, relative_path, user_id
     )
 
+    logger.info(f"人脸注册{'成功' if success else '失败'}: {name}（用户 {current_user.email}）")
+
     return FaceRegisterResponse(
         success=success,
         name=name,
@@ -201,6 +172,7 @@ async def delete_face(request:DeleteFaceRequest, current_user:User=Depends(get_c
     user_id = current_user.id
     name=request.name
     success = face_identity.delete_face(name, user_id)
+    logger.info(f"人脸删除{'成功' if success else '失败'}: {name}（用户 {current_user.email}）")
     return DeleteFaceResponse(
         success=success,
         name=name
@@ -219,7 +191,7 @@ async def get_face_screenshot(request:GetScreenshotRequest, current_user:User=De
     if screenshot_path is None:
         raise HTTPException(404, "截图不存在")
 
-    base_dir = Path(__file__).parent.parent.parent
+    base_dir = settings.BASE_DIR
     screenshot_path = Path(screenshot_path)
     if not screenshot_path.is_absolute():
         screenshot_path = base_dir / screenshot_path
@@ -242,6 +214,7 @@ async def modify_face(
         register_time=request.register_time,
         is_online=request.is_online
     )
+    logger.info(f"人脸修改{'成功' if success else '失败'}: {request.old_name} → {request.new_name}（用户 {current_user.email}）")
     return ModifyFaceResponse(
         success=success,
         message="修改成功" if success else "修改失败"
@@ -268,7 +241,6 @@ async def websocket_log(websocket: WebSocket):
 
 @router.post("/frontend-log",response_model=FrontendLogResponse)
 async def frontend_log(request: FrontendLogRequest):
-    from app.logger import logger
     msg = f"[前端 {request.page}] {request.message}"
     if request.level == 'error':
         logger.error(msg)
@@ -286,16 +258,20 @@ async def get_recent_logs(request:GetLogsRequest):
     date = request.date
 
     if date:
-        log_file = Path("logs") / f"app_{date}.log"
+        log_file = settings.LOG_DIR / f"app_{date}.log"
     else:
         today = datetime.now().strftime("%Y-%m-%d")
-        log_file = Path("logs") / f"app_{today}.log"
+        log_file = settings.LOG_DIR / f"app_{today}.log"
 
     if not log_file.exists():
         return GetLogsResponse(logs=[])
 
-    with open(log_file, "r", encoding="utf-8") as f:
-        all_lines = f.readlines()
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+    except Exception as e:
+        logger.error(f"读取日志文件失败: {e}", exc_info=True)
+        return GetLogsResponse(logs=[])
 
     if level != "all":
         all_lines = [l for l in all_lines if f"[{level.upper()}]" in l]

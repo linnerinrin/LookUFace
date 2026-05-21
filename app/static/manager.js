@@ -136,7 +136,7 @@ function sortFaces(faces, sortType) {
             });
             break;
         case 'duration':
-            sorted.sort((a, b) => (b.total_online_minutes || 0) - (a.total_online_minutes || 0));
+            sorted.sort((a, b) => (b.online_time || 0) - (a.online_time || 0));
             break;
     }
     return sorted;
@@ -148,7 +148,7 @@ function exportToExcel() {
 
     let csv = '\uFEFF序号,姓名,注册时间,在线状态,签到时间,总在线时长(分钟)\n';
     facesData.forEach((face, i) => {
-        csv += `${i + 1},${face.name},${face.register_time || ''},${face.is_online ? '在线' : '离线'},${face.checkin_time || ''},${face.total_online_minutes || 0}\n`;
+        csv += `${i + 1},${face.name},${face.register_time || ''},${face.is_online ? '在线' : '离线'},${face.checkin_time || ''},${face.online_time || 0}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -241,8 +241,7 @@ document.addEventListener('keydown', function(e) {
 //加载
 async function loadFaces() {
     const grid = document.getElementById('facesGrid');
-    const onlineCount = facesData.filter(f => f.is_online).length;
-    document.getElementById('onlineCount').innerText = onlineCount;
+
     if (!isLoggedIn()) {
         updateUIAfterLoginChange();
         return;
@@ -267,6 +266,8 @@ async function loadFaces() {
 
         const data = await response.json();
         facesData = data.faces || [];
+        const onlineCount = facesData.filter(f => f.is_online).length;
+        document.getElementById('onlineCount').innerText = onlineCount;
         renderFaces(facesData);
 
     } catch (err) {
@@ -300,10 +301,12 @@ function renderFaces(faces) {
         const safeName = face.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
         const onlineBadge = face.is_online ? '<span style="color:#4caf50; font-weight:600;">● 在线</span>' : '<span style="color:#999;">● 离线</span>';
         const checkinTime = face.checkin_time ? new Date(face.checkin_time).toLocaleString() : '未签到';
-        const totalMinutes = face.total_online_minutes || 0;
+        const totalMinutes = face.online_time || 0;
+        console.log(`${face.name} 的 online_time:`, totalMinutes);
         const hours = Math.floor(totalMinutes / 60);
         const mins = totalMinutes % 60;
         const durationStr = `${hours}h ${mins}m`;
+        console.log(`${face.name} 的 durationStr:`, durationStr);
         const onlineBtn = face.is_online
             ? `<button class="btn-checkout" onclick="showCheckoutModal('${safeName}')">签退</button>`
             : `<button class="btn-checkin" onclick="checkinFace('${safeName}')">签到</button>`;

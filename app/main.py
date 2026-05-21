@@ -5,9 +5,8 @@ lifespan() 生命周期管理 启动时创建数据库
 create_app()创建fastapi实例 配置cors 写进路由
 """
 import asyncio
-import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -26,30 +25,36 @@ from app.services.email_service import cleanup_expired_codes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """生命周期管理：启动时初始化数据库"""
-    print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    """生命周期管理：启动时初始化数据库，关闭时清理后台任务"""
+    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     Base.metadata.create_all(bind=engine)
-    asyncio.create_task(cleanup_expired_codes())
-    print("Models loaded successfully")
+    # [修改] 保存 cleanup 任务引用，关闭时 cancel() 避免 "Task was destroyed but it is pending" 警告
+    cleanup_task = asyncio.create_task(cleanup_expired_codes())
+    logger.info("Models loaded successfully")
     yield
-    print("Shutting down...")
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Shutting down...")
 
 
 def create_app() -> FastAPI:
-    """创建 FastAPI 应用实例"""
+    """创建FastAPI应用实例"""
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        description="基于 FastAPI 的人脸分析服务，支持人脸检测、年龄性别识别、人脸识别",
+        description="hello dream",
         docs_url="/docs",
         redoc_url="/redoc",
         lifespan=lifespan
     )
 
-    # CORS 配置
+    allowed_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -58,10 +63,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        logger.error(f"{str(exc)}", exc_info=True)
+        if isinstance(exc, HTTPException):
+            raise exc
+        logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"detail":str(exc)}
+            content={"detail": "Internal server error"}
         )
 
 
@@ -69,8 +76,9 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(check_router, prefix="/api/v1")
 
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    # [优化] 使用 settings.BASE_DIR 替代 os.path 拼接
+    static_dir = settings.BASE_DIR / "app" / "static"
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
     return app
 
 
@@ -83,7 +91,7 @@ if __name__ == "__main__":
 
     def open_browser():
         try:
-            webbrowser.open("http://localhost:8000/idx.html")
+            webbrowser.open(f"http://localhost:{settings.PORT}/idx.html")
         except:
             raise Exception("未检测到html文件或未打开浏览器，请于app/static/处检查文件完整性")
 

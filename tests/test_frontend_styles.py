@@ -645,22 +645,60 @@ def test_online_badge_uses_css_dot_not_colored_glyph() -> None:
 
 
 def test_avatars_show_initial_instead_of_emoji() -> None:
-    """人脸头像与统计图标改为文字（名字首字 / 中文单字），不再是 emoji。"""
+    """人脸头像改为名字首字，不再是 emoji。"""
     js = _read_ui_source("manager.js")
     assert "avatar-initial" in js, "人脸卡片头像未改为名字首字"
     assert "avatarInitial(" in js, "缺少取名字首字的函数"
 
-    html = _read_ui_source("manager.html")
-    assert 'class="stat-icon"' in html, "统计卡片图标位缺失"
-    assert 'class="stat-icon stat-icon-online"' in html, "在线统计卡片图标位缺失"
-
     css = _read_ui_source("manager.css")
-    for selector in (r"\.avatar-initial\s*\{", r"\.stat-icon-online\s*\{"):
-        assert re.search(selector, css), f"manager.css 缺少样式：{selector}"
+    assert re.search(r"\.avatar-initial\s*\{", css), "manager.css 缺少 .avatar-initial"
 
     # 已被取代的旧类不应再出现
     for stale_class in (".avatar-placeholder", ".empty-icon"):
         assert stale_class not in css, f"manager.css 仍残留已废弃的 {stale_class}"
+
+
+def test_stats_cards_have_no_icon_div() -> None:
+    """统计卡片的图标 div 已按需求整个删除。
+
+    需求原文：「把人脸和在线人数 那个人和在那个div整个删了」。
+    因此 HTML 里不得再有 ``.stat-icon`` 元素，
+    CSS 里也不得留下没人用的 ``.stat-icon`` / ``.stat-icon-online`` 规则。
+    """
+    html = _read_ui_source("manager.html")
+    assert "stat-icon" not in html, "统计卡片里仍残留图标 div"
+    assert "stat-icon-online" not in html, "统计卡片里仍残留在线图标 div"
+
+    # 文字内容必须保留 —— 只删图标，不删数据
+    assert 'id="totalCount"' in html, "「已注册人脸」数字丢失"
+    assert 'id="onlineCount"' in html, "「当前在线」数字丢失"
+    assert "已注册人脸" in html, "「已注册人脸」标签丢失"
+    assert "当前在线" in html, "「当前在线」标签丢失"
+
+    css = _read_ui_source("manager.css")
+    assert not re.search(r"\.stat-icon\s*\{", css), "CSS 里仍残留 .stat-icon 规则"
+    assert not re.search(r"\.stat-icon-online\s*\{", css), "CSS 里仍残留 .stat-icon-online 规则"
+
+    # 统计卡片本身仍要有样式（不能连卡片一起删了）
+    for selector in (r"\.stats-grid\s*\{", r"\.stat-card\s*\{", r"\.stat-info\s*\{",
+                     r"\.stat-value\s*\{", r"\.stat-label\s*\{"):
+        assert re.search(selector, css), f"manager.css 缺少统计卡片样式：{selector}"
+
+
+def test_stats_groups_are_separated_without_icons() -> None:
+    """图标 div 删掉后，两组数字必须有间距，不能挤在一起。
+
+    原先的间距来自图标 div 的宽度；图标移除后如果不补间距，
+    「已注册人脸」与「当前在线」会贴在一起。
+    """
+    css = _read_ui_source("manager.css")
+    match = re.search(r"\.stat-info\s*\{([^}]*)\}", css)
+    assert match, "未找到 .stat-info 规则"
+    body = match.group(1)
+    assert "margin-right" in body, "图标删除后未给 .stat-info 补间距"
+    assert re.search(r"\.stat-info:last-child\s*\{", css), (
+        "缺少 :last-child 归零，末尾会多出一段空白"
+    )
 
 
 def test_avatar_initial_handles_edge_cases() -> None:

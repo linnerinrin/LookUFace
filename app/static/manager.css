@@ -321,30 +321,15 @@ h1 {
     box-shadow: var(--card-shadow);
 }
 
-/* 统计卡片里的图标位：原先放 emoji，现改为中文单字 */
-.stat-icon {
-    width: 52px;
-    height: 52px;
-    background: linear-gradient(135deg, rgba(74, 144, 226, 0.2) 0%, rgba(240, 98, 146, 0.2) 100%);
-    border-radius: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-    font-weight: 600;
-    color: #4a90e2;
-    user-select: none;
-}
-
-/* 在线统计：绿色系（原先是内联 style 的绿色 emoji） */
-.stat-icon-online {
-    background: linear-gradient(135deg, rgba(76, 175, 80, 0.2) 0%, rgba(76, 175, 80, 0.1) 100%);
-    color: #43a047;
-}
-
 .stat-info {
     display: flex;
     flex-direction: column;
+    /* 图标 div 已移除，两组数字直接相邻，用间距把它们分开 */
+    margin-right: 40px;
+}
+
+.stat-info:last-child {
+    margin-right: 0;
 }
 
 .stat-value {
@@ -919,15 +904,6 @@ body.dark #payModal .modal-content {
     border-radius: 12px;
     background: #fff;
     padding: 8px;
-}
-
-/* 深色主题：统计卡片单字提亮，保证对比度 */
-body.dark .stat-icon {
-    color: #7fb3e8;
-}
-
-body.dark .stat-icon-online {
-    color: #81c784;
 }
 
 /* ========== 状态徽标 ========== */

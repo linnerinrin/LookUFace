@@ -61,8 +61,9 @@ async def check_out(
 ) -> CheckOutResponse:
     """签退（``away=false``）或暂离（``away=true``）。
 
-    可选传入 ``checkout_time`` 自定义结算时刻（事后补签退用）。
-    服务端会校验它不早于签到时间、不晚于当前时间。
+    补录在场时间用 ``duration_minutes``（分钟数）：
+    服务端把签到时间顺推为 ``结算时刻 - duration_minutes``。
+    也可用 ``checkout_time`` 指定结算时刻，或 ``checkin_time`` 直接改起点。
     """
     result = session_service.check_out(
         db,
@@ -70,6 +71,8 @@ async def check_out(
         name=request.name,
         away=request.away,
         checkout_time=request.checkout_time,
+        checkin_time=request.checkin_time,
+        duration_minutes=request.duration_minutes,
     )
     billing = result.billing
     detail = result.breakdown

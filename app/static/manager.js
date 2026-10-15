@@ -480,6 +480,7 @@ function showCheckoutModal(name) {
     const isAway = !!face.is_away;
 
     const checkinEl = document.getElementById('checkoutCheckinTime');
+    const durationEl = document.getElementById('checkoutDurationInput');
     const customEl = document.getElementById('checkoutCustomTime');
     const amountEl = document.getElementById('checkoutAmount');
     const title = document.getElementById('checkoutTitle');
@@ -491,7 +492,18 @@ function showCheckoutModal(name) {
 
     const checkinDate = face.checkin_time ? new Date(face.checkin_time) : null;
     if (checkinEl) {
+        // 只读展示，避免 Chrome 的表单值恢复把旧值塞进可编辑控件
         checkinEl.value = checkinDate ? checkinDate.toLocaleString() : '未签到';
+    }
+
+    // 在场时长（分钟）—— 这是主要输入：直接填分钟数，金额随填随算。
+    // 服务端会把签到时间顺推到这个时长，因此**不存在"时间不合理"的情况**，
+    // 也就不会再弹出"签退时间不能晚于当前时刻"之类的报错。
+    if (durationEl) {
+        durationEl.value = '';
+        durationEl.disabled = !isOnline;
+        // 预填当前已流逝分钟数，用户改成想要的值即可
+        durationEl.placeholder = '例如 600 表示 10 小时';
     }
 
     // 默认签退时间 = 现在（精确到秒），可由用户改成真实离开时间。
@@ -545,45 +557,54 @@ function showCheckoutModal(name) {
             amountEl.value = '未在计时';
             return;
         }
-        // 本地按「签到时间 -> 签退时间」预演金额，仅用于填表时的即时反馈；
-        // 真正的金额一律以服务端签退结果为准。
+        const rate = serverStatus.rate_per_minute || 0;
+        const awayMinutes = serverStatus.away_minutes || 0;
+
+        // 以「在场时长（分钟）」为准预演：这是用户主要填的字段。
+        // 没填时回落到「签到时间 -> 签退时间」的实际流逝。
+        const raw = durationEl && durationEl.value !== '' ? Number(durationEl.value) : null;
         const settleValue = customEl && customEl.value ? customEl.value : null;
         const settleDate = settleValue ? new Date(settleValue) : new Date();
         const checkin = serverStatus.checkin_time ? new Date(serverStatus.checkin_time) : null;
 
-        if (!checkin) { amountEl.value = '未知'; return; }
-        if (settleDate < checkin) {
-            amountEl.value = '签退时间早于签到时间';
+        let totalMinutes;
+        let source;
+        if (raw !== null && isFinite(raw) && raw >= 0) {
+            totalMinutes = Math.floor(raw);
+            source = 'fill';
+        } else if (checkin) {
+            totalMinutes = Math.max(0, Math.floor((settleDate - checkin) / 60000));
+            source = 'elapsed';
+        } else {
+            amountEl.value = '未知';
             return;
         }
 
-        const totalMinutes = Math.floor((settleDate - checkin) / 60000);
-        const awayMinutes = serverStatus.away_minutes || 0;
         const billable = Math.max(0, totalMinutes - awayMinutes);
-        const rate = serverStatus.rate_per_minute || 0;
-        const amount = billable * rate;
+        amountEl.value = '¥ ' + (billable * rate).toFixed(2);
 
-        // 金额是主角，时长明细放进下面的说明行
-        amountEl.value = '¥ ' + amount.toFixed(2);
         if (hint) {
-            hint.textContent = '在场 ' + formatMinutes(totalMinutes)
-                + (awayMinutes ? '，其中暂离 ' + formatMinutes(awayMinutes) : '')
-                + '；计费 ' + billable + ' 分钟 × ' + rate.toFixed(2) + ' 元/分钟'
-                + '。最终金额以服务端结算结果为准。';
+            hint.textContent = source === 'fill'
+                ? '按你填的 ' + totalMinutes + ' 分钟'
+                    + (awayMinutes ? ' 扣除暂离 ' + awayMinutes + ' 分钟' : '')
+                    + ' 计费 ' + billable + ' 分钟 × ' + rate.toFixed(2)
+                    + ' 元/分钟。最终金额以服务端结算结果为准。'
+                : '在场 ' + formatMinutes(totalMinutes)
+                    + (awayMinutes ? '，其中暂离 ' + formatMinutes(awayMinutes) : '')
+                    + '；计费 ' + billable + ' 分钟 × ' + rate.toFixed(2) + ' 元/分钟'
+                    + '。最终金额以服务端结算结果为准。';
         }
     }
 
     if (isOnline) {
-        // 输入变化时即时预演，并标记"用户已手动改过"。
-        // 这个标记用于提交时区分"用户明确指定了时间"与"还是默认值" ——
-        // 后者不该传给服务端（浏览器可能回填旧值，见上面的说明）。
+        // 两个输入都触发即时预演
+        if (durationEl) {
+            durationEl.oninput = preview;
+            durationEl.onchange = preview;
+        }
         if (customEl) {
-            const markEdited = function () {
-                customEl.dataset.edited = '1';
-                preview();
-            };
-            customEl.oninput = markEdited;
-            customEl.onchange = markEdited;
+            customEl.oninput = preview;
+            customEl.onchange = preview;
         }
         // 用服务端的权威数据回填（含暂离扣除、费率、签到时间）
         LF.api.post('/sessions/status', { name: name })
@@ -593,15 +614,13 @@ function showCheckoutModal(name) {
                 if (isAway || status.is_away) {
                     if (title) title.textContent = '暂离中 · 签退结算';
                 }
-                // 用服务端时刻校正控件上限：计费只能结算已经过去的时间。
-                // 若用户尚未手动改过，同时把默认值也对齐到服务端时刻，
-                // 避免本机时钟比服务端快几秒时被误判成"未来"。
-                if (customEl && status.server_now) {
-                    const serverMax = toLocalInputValue(new Date(status.server_now));
-                    customEl.max = serverMax;
-                    if (customEl.dataset.edited !== '1') {
-                        customEl.value = serverMax;
-                    }
+                // 预填当前已流逝分钟数，用户改成想要的时长即可
+                if (durationEl && durationEl.value === '') {
+                    durationEl.value = String(status.elapsed_minutes || 0);
+                }
+                // 签退时间对齐服务端时刻（首个默认值）
+                if (customEl && customEl.dataset.edited !== '1' && status.server_now) {
+                    customEl.value = toLocalInputValue(new Date(status.server_now));
                 }
                 preview();
             })
@@ -629,48 +648,51 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
     const away = document.getElementById('checkoutAway')?.checked || false;
     const button = document.getElementById('confirmCheckoutBtn');
     const errorEl = document.getElementById('checkoutError');
+    const durationEl = document.getElementById('checkoutDurationInput');
     const customEl = document.getElementById('checkoutCustomTime');
 
     if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
     button.disabled = true;
 
-    // 只在**用户明确改过**签退时间时才把它传给服务端。
-    //
-    // 为什么要这么严格：
-    //   * Chrome 的"表单值恢复"会把上一次的值回填进 datetime-local 控件，
-    //     甚至覆盖脚本刚赋的默认值。实测后果是：控件里留着上一次的旧时刻，
-    //     用户直接点确认 -> 服务端按那个旧时刻结算 -> "账单全是 0"
-    //     （日志里可见 计费秒数=3 / 11）。
-    //   * 没改过就等于"现在签退"，让服务端用自己的当前时间最可靠，
-    //     既不受浏览器回填影响，也不受本机与服务器时钟差影响。
-    //
-    // 用户改过的情况仍然完整支持（事后补签退）。
-    // 只把"用户明确改过"的签退时间发给服务端；没改过就等于"现在签退"，
-    // 交给服务端用自己的当前时钟，避免浏览器回填旧值与时钟偏差。
-    //
-    // 关键：**未来时刻不再静默改写，而是明确报错**。
-    // 旧实现把用户的未来时间悄悄改成"现在"（服务端还会再收敛一次），
-    // 于是用户"选了几分钟以后"却拿到 0 元账单，且没有任何提示 ——
-    // 实测就是这样被误认为缺陷的。现在直接把原因说清楚。
-    let checkoutTime = null;
-    if (!away && customEl && customEl.dataset.edited === '1' && customEl.value) {
-        const nowValue = toLocalInputValue(new Date());
-        customEl.max = nowValue;
-        if (customEl.value > nowValue) {
-            const message = '签退时间不能晚于当前时刻（' + nowValue.replace('T', ' ') + '）。'
-                + '计费只能结算已经过去的时间，请把签退时间改到当前时刻或更早。';
+    // 暂离不结算，带上时长或时刻都没有意义
+    if (away) {
+        try {
+            const data = await LF.api.post('/sessions/checkout',
+                { name: checkoutTargetName, away: true });
+            closeCheckoutModal();
+            LF.toast(data.message + '（暂离不结算，归位后继续计时）', false);
+        } catch (err) {
+            const message = err.message || '操作失败';
             if (errorEl) { errorEl.textContent = message; errorEl.style.display = 'block'; }
             LF.toast(message, true);
+        } finally {
             button.disabled = false;
-            return;
+            loadFaces();
         }
-        checkoutTime = fromLocalInputValue(customEl.value);
+        return;
     }
 
-    // 暂离不使用自定义时间（暂离不结算）；签退仅在用户指定时才带上时间。
-    const payload = { name: checkoutTargetName, away: away };
-    if (checkoutTime) {
-        payload.checkout_time = checkoutTime;
+    // 以「在场时长（分钟）」为准：服务端据此把签到时间顺推到该时长。
+    //
+    // 这样就不存在"时间不合理"的情况 —— 用户填 600 就是 600 分钟（10 小时），
+    // 金额随之确定，不会再出现"签退时间不能晚于当前时刻"之类的报错。
+    const payload = { name: checkoutTargetName, away: false };
+    const rawDuration = durationEl && durationEl.value !== '' ? Number(durationEl.value) : null;
+    if (rawDuration !== null && isFinite(rawDuration) && rawDuration >= 0) {
+        payload.duration_minutes = Math.floor(rawDuration);
+    }
+
+    // 签退时间：仅当用户明确改过时才传（默认交给服务端的当前时钟，
+    // 避免浏览器"表单值恢复"塞回旧值造成 0 元账单）。
+    if (customEl && customEl.dataset.edited === '1' && customEl.value) {
+        payload.checkout_time = fromLocalInputValue(customEl.value);
+        // 用户把签退时间改早了：若又没填时长，就用实际已流逝的分钟数，
+        // 让"签到时间"顺推后与签退时间保持自洽（否则会算出 0 分钟）。
+        if (payload.duration_minutes === undefined) {
+            const elapsed = serverStatus && serverStatus.elapsed_minutes
+                ? serverStatus.elapsed_minutes : 0;
+            payload.duration_minutes = Math.max(0, Math.floor(elapsed));
+        }
     }
 
     try {

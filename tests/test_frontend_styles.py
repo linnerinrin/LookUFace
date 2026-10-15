@@ -172,6 +172,76 @@ def test_pay_modal_css_matches_checkout_modal() -> None:
         )
 
 
+def test_checkout_modal_shows_amount_not_duration() -> None:
+    """按需求：结账弹窗里原来的「本次时长」格子改为直接显示**应付金额**。
+
+    时长明细改为放在字段下方的说明行里，所以 ``checkoutAmount`` 必须存在，
+    而 ``checkoutDuration`` 不应再作为输入框存在。
+    """
+    html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+
+    assert 'id="checkoutAmount"' in html, "结账弹窗缺少「应付金额」字段"
+    assert 'id="checkoutDuration"' not in html, "「本次时长」输入框应已被金额字段替换"
+    assert "checkoutAmount" in manager_js, "JS 未使用金额字段"
+
+    # 金额字段的标签必须是「应付金额」
+    match = re.search(r'id="checkoutAmount"[\s\S]{0,200}?</div>', html)
+    assert match, "未找到金额字段所在的表单块"
+    block_start = html.rfind("<label", 0, html.find('id="checkoutAmount"'))
+    label_text = html[block_start:html.find('id="checkoutAmount"')]
+    assert "应付金额" in label_text, f"金额字段标签不正确：{label_text!r}"
+
+
+def test_checkout_title_has_no_parentheses() -> None:
+    """结账弹窗的标题不应带括号。
+
+    实测弹窗标题曾被写成「暂离中 · 签退结算」之类，标题里再塞
+    「（可自定义，默认现在）」这类说明会显得杂乱。
+    """
+    html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+
+    # 标题初始文案
+    match = re.search(r'id="checkoutTitle"[^>]*>([^<]*)<', html)
+    assert match, "未找到结账弹窗标题"
+    assert "（" not in match.group(1) and "(" not in match.group(1), (
+        f"标题含括号：{match.group(1)!r}"
+    )
+
+    # JS 里给标题赋值的文案也不应含括号。
+    # 注意：代码里标题是通过局部变量赋值的（title.textContent = ...），
+    # 因此这里匹配 ".textContent = '...'" 这种形式，而不是 getElementById('checkoutTitle')。
+    title_assignments = re.findall(
+        r"title\.textContent\s*=\s*([^;]+);",
+        manager_js,
+    )
+    assert title_assignments, "未找到给标题赋值的代码"
+
+    for assignment in title_assignments:
+        for literal in re.findall(r"'([^']*)'", assignment):
+            assert "（" not in literal and "(" not in literal, (
+                f"标题文案含括号：{literal!r}"
+            )
+
+
+def test_frontend_clamps_stale_checkout_time_on_submit() -> None:
+    """提交前必须把超过"现在"的签退时间纠正为现在。
+
+    回归背景（实测）：弹窗打开时控件被填入"当时"的时间，过了约 9 分钟才点确认，
+    该时间已成未来，提交被服务端拒绝：
+        「当前约 03:36:59，你填的是 03:45:37」
+    前端必须在提交时刷新 max 并纠正过期值，服务端再收敛一次做兜底。
+    """
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
+
+    assert "customEl.max = nowValue" in handler, "提交时未重新同步时间上限"
+    assert "customEl.value > nowValue" in handler, (
+        "提交时未纠正已过期的签退时间（会撞上服务端校验）"
+    )
+
+
 def test_payment_placeholder_page_exists() -> None:
     """支付链接指向的占位页必须存在，且写明「开发中」。"""
     page = STATIC_DIR / "pay-dev.html"

@@ -162,19 +162,20 @@
                     <label for="checkoutCustomTime">
                         签退时间
                         <span style="color: var(--text-secondary); font-weight: 400;">
-                            （可自定义，默认现在）
+                            可自定义，默认现在
                         </span>
                     </label>
                     <input type="datetime-local" id="checkoutCustomTime" class="auth-input" step="1">
                     <p style="color: var(--text-secondary); font-size: 12px; margin-top: 6px;"
                        id="checkoutCustomHint">
-                        用于事后补签退：填真实离开时间，服务端按它精确计算时长与金额。
+                        用于事后补签退：填真实离开时间，服务端按它精确计算金额。
                     </p>
                 </div>
 
+                <!-- 直接显示金额；时长明细放在下面的说明里 -->
                 <div class="form-group">
-                    <label>本次时长（按上面的签退时间计算）</label>
-                    <input type="text" id="checkoutDuration" class="auth-input" disabled>
+                    <label>应付金额</label>
+                    <input type="text" id="checkoutAmount" class="auth-input" disabled>
                 </div>
 
                 <div class="form-group">
@@ -185,7 +186,7 @@
                 </div>
 
                 <p id="checkoutHint" style="color: var(--text-secondary); font-size: 12px; margin-bottom: 16px;">
-                    时长与金额由服务端按上面的签退时间计算，前端不参与。
+                    金额由服务端按上面的签退时间计算，前端不参与。
                 </p>
 
                 <div id="checkoutError"

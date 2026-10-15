@@ -61,8 +61,12 @@
             <div class="modal-body" id="authBody"></div>
         </div>
     </div>
+    <!-- 顺序要求：api.js 必须最先，auth.js 紧随其后，
+         业务脚本（idx.js）最后 —— 与 manager/console/account/in/out 保持一致。
+         原先 idx.js 排在 auth.js 之前，会让 auth.js 运行在业务脚本之后，
+         任何对 window.LookUFace 的依赖都可能还没就绪。 -->
     <script src="api.js"></script>
-    <script src="idx.js"></script>
     <script src="auth.js"></script>
+    <script src="idx.js"></script>
 </body>
 </html>

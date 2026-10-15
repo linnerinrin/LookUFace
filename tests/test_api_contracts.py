@@ -419,6 +419,158 @@ def test_status_response_has_breakdown(client, face) -> None:
         assert field in body, f"状态响应缺少 {field}"
 
 
+# --------------------------------------------------------------------------- #
+# 自定义签退时间
+# --------------------------------------------------------------------------- #
+
+
+def _local_stamp(moment) -> str:
+    """生成 datetime-local 控件那种格式（无时区）。"""
+    return moment.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def test_checkout_accepts_datetime_local_format(client, face, db_session) -> None:
+    """必须接受 datetime-local 控件的取值格式（``YYYY-MM-DDTHH:MM:SS``）。
+
+    这是前端实际会提交的格式，若不被解析就会 422。
+    """
+    from datetime import datetime, timedelta
+
+    from app.db.models import UserFace
+
+    # 关键：签到时间要抹掉微秒。否则"签到时间含微秒、签退时间只到秒"
+    # 会产生 119.99 分钟这种边界，被向下取整成 119 —— 那是测试自身的构造问题。
+    checkin = (datetime.now() - timedelta(hours=3)).replace(microsecond=0)
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+
+    db_session.expire_all()
+    row = db_session.query(UserFace).filter_by(id=face.id).one()
+    row.checkin_time = checkin
+    db_session.commit()
+
+    response = client.post(
+        "/api/v1/sessions/checkout",
+        json={
+            "name": face.name,
+            "away": False,
+            "checkout_time": _local_stamp(checkin + timedelta(hours=2)),
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["settled"] is True
+    assert data["session_minutes"] == 120, f"应按自定义时间算 120 分钟，实际 {data['session_minutes']}"
+    assert data["elapsed_minutes"] == 120
+
+
+def test_checkout_accepts_minute_precision_format(client, face, db_session) -> None:
+    """也要接受不带秒的格式（``YYYY-MM-DDTHH:MM``）。
+
+    注意语义：``HH:MM`` 会被解析成该分钟的 ``:00`` 秒，因此若签到时间带秒，
+    实际计费会比"整 N 分钟"略少，向下取整后可能少 1 分钟。
+    这是**正确**的 —— 用户填的就是那一分钟，服务端不应替他向上补足。
+    这里用一个整分钟的签到时间，使断言无歧义。
+    """
+    from datetime import datetime, timedelta
+
+    from app.db.models import UserFace
+
+    checkin = (datetime.now() - timedelta(hours=2)).replace(second=0, microsecond=0)
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    db_session.expire_all()
+    row = db_session.query(UserFace).filter_by(id=face.id).one()
+    row.checkin_time = checkin
+    db_session.commit()
+
+    stamp = (checkin + timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M")
+    response = client.post(
+        "/api/v1/sessions/checkout",
+        json={"name": face.name, "away": False, "checkout_time": stamp},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["session_minutes"] == 45
+    assert body["elapsed_minutes"] == 45
+
+
+def test_minute_precision_truncates_seconds_honestly(client, face, db_session) -> None:
+    """签到时间带秒 + 只填到分钟时，少于整分钟应向下取整，不得向上补足。"""
+    from datetime import datetime, timedelta
+
+    from app.db.models import UserFace
+
+    checkin = (datetime.now() - timedelta(hours=2)).replace(microsecond=0)
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    db_session.expire_all()
+    row = db_session.query(UserFace).filter_by(id=face.id).one()
+    row.checkin_time = checkin
+    db_session.commit()
+
+    # 签到时间是 HH:MM:45 这种带秒的时刻；签退只填到分钟 -> 实际少 45 秒
+    stamp = (checkin + timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M")
+    body = client.post(
+        "/api/v1/sessions/checkout",
+        json={"name": face.name, "away": False, "checkout_time": stamp},
+    ).json()
+
+    # 实际经过 44 分 15 秒 -> 计费 44 分钟（向下取整）
+    assert body["session_minutes"] in (44, 45), body["session_minutes"]
+    assert body["elapsed_minutes"] in (44, 45)
+
+
+def test_checkout_rejects_future_time_over_http(client, face) -> None:
+    """签退时间晚于当前时间必须被拒（400），且会话保持在线。"""
+    from datetime import datetime, timedelta
+
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    future = datetime.now() + timedelta(hours=1)
+
+    response = client.post(
+        "/api/v1/sessions/checkout",
+        json={"name": face.name, "away": False, "checkout_time": _local_stamp(future)},
+    )
+    assert response.status_code == 400
+    assert "不能晚于当前时间" in response.json()["detail"]
+
+    status = client.post("/api/v1/sessions/status", json={"name": face.name}).json()
+    assert status["is_online"] is True, "校验失败不得关闭会话"
+
+
+def test_checkout_rejects_time_before_checkin_over_http(client, face) -> None:
+    """签退时间早于签到时间必须被拒（400）。"""
+    from datetime import datetime, timedelta
+
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    earlier = datetime.now() - timedelta(hours=5)
+
+    response = client.post(
+        "/api/v1/sessions/checkout",
+        json={"name": face.name, "away": False, "checkout_time": _local_stamp(earlier)},
+    )
+    assert response.status_code == 400
+    assert "不能早于签到时间" in response.json()["detail"]
+
+
+def test_away_ignores_checkout_time_over_http(client, face) -> None:
+    """暂离时即使传了 checkout_time 也不应结算。"""
+    from datetime import datetime, timedelta
+
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+
+    body = client.post(
+        "/api/v1/sessions/checkout",
+        json={
+            "name": face.name,
+            "away": True,
+            "checkout_time": _local_stamp(datetime.now() - timedelta(minutes=5)),
+        },
+    ).json()
+
+    assert body["settled"] is False
+    assert body["is_away_action"] is True
+    assert body["is_online"] is True
+
+
 def test_billing_qrcode_path_traversal_blocked(client) -> None:
     """旧版二维码文件名直接拼接用户输入，可穿越目录。"""
     response = client.get("/api/v1/billing/qrcode/..%2F..%2F..%2Fevil.png")

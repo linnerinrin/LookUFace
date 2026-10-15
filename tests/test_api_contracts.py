@@ -322,7 +322,101 @@ def test_billing_quote_ignores_client_duration(client, face) -> None:
     # 服务端按真实会话计算，客户端传 0 不生效
     assert body["minutes"] >= 0
     assert body["rate_per_minute"] > 0
-    assert body["qrcode_url"].startswith("/api/v1/billing/qrcode/")
+
+
+def test_billing_quote_offline_has_no_pay_entrance(client, face) -> None:
+    """**核心回归**：未在计时时不得给出二维码与支付链接。
+
+    旧版无论何时都返回二维码和 pay_url —— 包括 0 元、包括已经签退离线的情况。
+    """
+    response = client.post("/api/v1/billing/quote", json={"name": face.name})
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["is_online"] is False
+    assert body["minutes"] == 0
+    assert body["amount"] == 0.0
+    assert body["payable"] is False, "离线时 payable 必须为 False"
+    assert body["qrcode_url"] == "", "无应付金额时不得给出二维码"
+    assert body["pay_url"] == "", "无应付金额时不得给出支付链接"
+
+
+def test_billing_quote_short_session_has_no_pay_entrance(client, face) -> None:
+    """刚签到（不足一分钟）不应给出付款入口，但要能说明在场时间。"""
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+
+    body = client.post("/api/v1/billing/quote", json={"name": face.name}).json()
+
+    assert body["payable"] is False
+    assert body["qrcode_url"] == ""
+    assert body["pay_url"] == ""
+    assert body["is_online"] is True
+    assert body["summary"], "应给出可读的账单说明"
+    # 明确告知「不足 1 分钟不计费」，避免用户误以为有 bug
+    assert "不足" in body["summary"] or "无需支付" in body["summary"]
+
+
+def test_billing_quote_exposes_breakdown_fields(client, face) -> None:
+    """账单响应必须包含算式明细，便于排查「为什么是 0 分钟」。"""
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    body = client.post("/api/v1/billing/quote", json={"name": face.name}).json()
+
+    for field in ("elapsed_minutes", "away_minutes", "checkin_time", "is_away", "summary"):
+        assert field in body, f"账单响应缺少 {field}"
+
+
+def test_checkout_response_distinguishes_away_from_settlement(client, face) -> None:
+    """**核心回归**：暂离与签退结算必须可区分。
+
+    旧版前端无法区分两者，把暂离返回的 0 分钟 0 元当成签退结果展示，
+    于是「无论多久都显示 0 分钟 0 元」。
+    """
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+
+    # 暂离：不结算
+    away = client.post(
+        "/api/v1/sessions/checkout", json={"name": face.name, "away": True}
+    ).json()
+    assert away["success"] is True
+    assert away["is_away_action"] is True
+    assert away["settled"] is False, "暂离不得标记为已结算"
+    assert away["session_minutes"] == 0
+    assert away["amount"] == 0.0
+
+    # 签退：结算
+    settled = client.post(
+        "/api/v1/sessions/checkout", json={"name": face.name, "away": False}
+    ).json()
+    assert settled["success"] is True
+    assert settled["is_away_action"] is False
+    assert settled["settled"] is True, "签退必须标记为已结算"
+    assert settled["checkin_time"], "结算结果应带本次计费起点"
+    for field in ("elapsed_minutes", "away_minutes", "rate_per_minute"):
+        assert field in settled, f"签退响应缺少 {field}"
+
+
+def test_away_does_not_clear_checkin_time_over_http(client, face) -> None:
+    """暂离后计费起点必须保留，否则在场时长会被清零。"""
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+
+    status = client.post("/api/v1/sessions/status", json={"name": face.name}).json()
+    checkin_before = status["checkin_time"]
+    assert checkin_before, "签到后应有 checkin_time"
+
+    client.post("/api/v1/sessions/checkout", json={"name": face.name, "away": True})
+
+    status_after = client.post("/api/v1/sessions/status", json={"name": face.name}).json()
+    assert status_after["is_away"] is True
+    assert status_after["is_online"] is True
+    assert status_after["checkin_time"] == checkin_before, "暂离不得修改签到时间"
+
+
+def test_status_response_has_breakdown(client, face) -> None:
+    """状态接口也要给出算式明细。"""
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    body = client.post("/api/v1/sessions/status", json={"name": face.name}).json()
+    for field in ("elapsed_minutes", "away_minutes", "rate_per_minute", "amount", "preview_minutes"):
+        assert field in body, f"状态响应缺少 {field}"
 
 
 def test_billing_qrcode_path_traversal_blocked(client) -> None:

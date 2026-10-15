@@ -67,6 +67,7 @@ async def check_out(
         away=request.away,
     )
     billing = result.billing
+    detail = result.breakdown
     return CheckOutResponse(
         success=result.success,
         name=result.name,
@@ -76,6 +77,15 @@ async def check_out(
         amount=billing.amount if billing else 0.0,
         is_online=result.state.is_online,
         is_away=result.state.is_away,
+        # 关键：明确告诉前端这次是「暂离」还是「签退结算」。
+        # 暂离不结算，session_minutes/amount 必然为 0；前端若把两者混为一谈，
+        # 就会出现「无论多久都显示 0 分钟 0 元」的误解。
+        is_away_action=request.away,
+        settled=result.settled,
+        checkin_time=result.checkin_at,
+        elapsed_minutes=detail.elapsed_minutes if detail else 0,
+        away_minutes=detail.away_minutes if detail else 0,
+        rate_per_minute=settings.BILLING_RATE_PER_MINUTE,
     )
 
 
@@ -85,26 +95,25 @@ async def session_status(
     current_user: CurrentUser,
     db: DbSession,
 ) -> SessionStatusResponse:
-    """查询实时会话状态与预估账单。"""
-    state = session_service.get_status(db, user_id=current_user.id, name=request.name)
-    from app.domain.session import preview_minutes
-
-    preview = 0
-    if state.is_online and state.checkin_at is not None:
-        preview = preview_minutes(
-            state,
-            datetime.now(),
-            max_session_minutes=settings.MAX_SESSION_MINUTES,
-        )
+    """查询实时会话状态与预估账单（含算式明细）。"""
+    state, minutes, detail, amount, _payable = session_service.quote(
+        db,
+        user_id=current_user.id,
+        name=request.name,
+    )
 
     return SessionStatusResponse(
         name=request.name,
         is_online=state.is_online,
         is_away=state.is_away,
         checkin_time=state.checkin_at,
-        preview_minutes=preview,
+        preview_minutes=minutes,
         online_time=int(state.accumulated_minutes or 0),
         away_timeout_minutes=settings.AWAY_TIMEOUT_MINUTES,
+        elapsed_minutes=detail.elapsed_minutes,
+        away_minutes=detail.away_minutes,
+        rate_per_minute=settings.BILLING_RATE_PER_MINUTE,
+        amount=amount,
     )
 
 

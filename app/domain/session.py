@@ -146,11 +146,68 @@ def preview_minutes(state: SessionState, now: datetime, *, max_session_minutes: 
     return int(seconds // 60)
 
 
+@dataclass(frozen=True, slots=True)
+class Breakdown:
+    """计费算式明细。
+
+    把「为什么是这个金额」所需的每一项都摊开，便于排查
+    「为什么签退显示 0 分钟」这类问题 —— 只给出一个最终数字时，
+    无法区分「确实只待了几十秒」与「时间基准算错了」。
+    """
+
+    #: 从签到到现在经过的分钟数（未扣暂离）
+    elapsed_minutes: int
+    #: 其中被暂离扣掉的分钟数
+    away_minutes: int
+    #: 实际计费的分钟数（向下取整）
+    billable_minutes: int
+    #: 计费是否触发了单次上限
+    capped: bool
+    #: 精确的计费秒数（用于解释「不足一分钟为何是 0」）
+    billable_seconds: int
+
+    @property
+    def amount_note(self) -> str:
+        if self.billable_minutes <= 0:
+            return f"不足 1 分钟（实际 {self.billable_seconds} 秒），按规则不计费"
+        return f"{self.billable_minutes} 分钟"
+
+
+def breakdown(
+    state: SessionState,
+    now: datetime,
+    *,
+    max_session_minutes: int,
+) -> Breakdown:
+    """计算计费算式明细。"""
+    elapsed_seconds = 0.0
+    if state.checkin_at is not None:
+        elapsed_seconds = max(0.0, (now - state.checkin_at).total_seconds())
+
+    away_seconds = state.settled_away_seconds
+    if state.is_away and state.away_started_at is not None:
+        ongoing = (now - state.away_started_at).total_seconds()
+        if ongoing > 0:
+            away_seconds += ongoing
+
+    billable, capped = billable_seconds(state, now, max_session_minutes=max_session_minutes)
+
+    return Breakdown(
+        elapsed_minutes=int(elapsed_seconds // 60),
+        away_minutes=int(max(0.0, away_seconds) // 60),
+        billable_minutes=int(billable // 60),
+        capped=capped,
+        billable_seconds=int(billable),
+    )
+
+
 __all__ = [
     "BillingResult",
+    "Breakdown",
     "SessionState",
     "bill",
     "billable_seconds",
+    "breakdown",
     "compute_amount",
     "is_away_expired",
     "preview_minutes",

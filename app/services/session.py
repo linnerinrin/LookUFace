@@ -27,7 +27,15 @@ from app.core.errors import NotFoundError, ValidationError
 from app.db.models import UserFace
 from app.db.repository import get_face, online_faces, set_face_state
 from app.domain.registry import session_registry
-from app.domain.session import BillingResult, SessionState, bill, preview_minutes
+from app.domain.session import (
+    BillingResult,
+    Breakdown,
+    SessionState,
+    bill,
+    breakdown,
+    compute_amount,
+    preview_minutes,
+)
 from app.logger import logger
 
 
@@ -41,6 +49,12 @@ class ActionResult:
     state: SessionState
     deduplicated: bool = False
     billing: BillingResult | None = None
+    #: 本次动作是否真的发生了结算（暂离、重复请求都不会结算）
+    settled: bool = False
+    #: 计费算式明细，便于排查「为什么是 0 分钟」
+    breakdown: Breakdown | None = None
+    #: 本次会话的计费起点（结算后 state 里已清空，因此单独带出）
+    checkin_at: datetime | None = None
 
 
 class _Debounce:
@@ -260,6 +274,7 @@ class SessionService:
                 name=name,
                 state=self.state_of(user_id, name, face, now=moment),
                 deduplicated=True,
+                checkin_at=face.checkin_time,
             )
 
         if not skip_debounce and self._debounce.should_skip(
@@ -271,17 +286,24 @@ class SessionService:
                 name=name,
                 state=self.state_of(user_id, name, face, now=moment),
                 deduplicated=True,
+                checkin_at=face.checkin_time,
             )
 
         session_registry.mark_away(user_id, name, now=moment)
         set_face_state(db, face_id=face.id, is_away=True)
         face.is_away = True
-        logger.info("暂离开始 name=%s user_id=%s", name, user_id)
+        logger.info(
+            "暂离开始 name=%s user_id=%s（暂离不结算，签到时间保持 %s 不变）",
+            name,
+            user_id,
+            face.checkin_time.isoformat(sep=" ") if face.checkin_time else "无",
+        )
         return ActionResult(
             success=True,
             message=f"{name} 已暂离，超过 {settings.AWAY_TIMEOUT_MINUTES} 分钟未归将自动签退结算",
             name=name,
             state=self.state_of(user_id, name, face, now=moment),
+            checkin_at=face.checkin_time,
         )
 
     def _finalize(
@@ -323,6 +345,11 @@ class SessionService:
             rate_per_minute=settings.BILLING_RATE_PER_MINUTE,
             max_session_minutes=settings.MAX_SESSION_MINUTES,
         )
+        detail = breakdown(
+            state,
+            moment,
+            max_session_minutes=settings.MAX_SESSION_MINUTES,
+        )
 
         # 关键：online_time 只在结算时增加，且服务端保证其为非负数
         total = max(0, int(result.total_minutes))
@@ -343,14 +370,22 @@ class SessionService:
         face.checkin_time = None
         face.online_time = total
 
+        # 把算式明细写进日志。只说「本次 0 分钟」无法区分
+        # 「确实只待了几十秒」与「时间基准算错了」，因此把每一项都打出来。
         logger.info(
-            "签退结算 name=%s 本次 %d 分钟 累计 %d 分钟 金额 %.2f 元 原因=%s%s",
+            "签退结算 name=%s 本次 %d 分钟 累计 %d 分钟 金额 %.2f 元 原因=%s%s"
+            "｜算式：签到=%s 结算=%s 已流逝=%d分钟 暂离=%d分钟 计费秒数=%d",
             name,
             result.session_minutes,
             total,
             result.amount,
             reason,
             "（触发计费上限）" if result.capped else "",
+            state.checkin_at.isoformat(sep=" ") if state.checkin_at else "无",
+            moment.isoformat(sep=" "),
+            detail.elapsed_minutes,
+            detail.away_minutes,
+            detail.billable_seconds,
         )
         return ActionResult(
             success=True,
@@ -361,7 +396,52 @@ class SessionService:
             name=name,
             state=SessionState(is_online=False, accumulated_minutes=total),
             billing=result,
+            settled=True,
+            breakdown=detail,
+            checkin_at=state.checkin_at,
         )
+
+    # ------------------------------------------------------------------ #
+    # 计费报价（不改变任何状态）
+    # ------------------------------------------------------------------ #
+    def quote(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        name: str,
+        now: datetime | None = None,
+    ) -> tuple[SessionState, int, Breakdown, float, bool]:
+        """查询当前应付金额明细，**不改变任何状态**。
+
+        返回 ``(状态, 计费分钟, 算式明细, 金额, 是否有应付金额)``。
+
+        「是否有应付金额」= 正在计时 且 计费分钟 > 0。
+        未计时（离线）或不足一分钟时，没有应付金额，调用方不应给出付款入口。
+        """
+        moment = now or datetime.now()
+        face = self._load_face(db, user_id, name)
+        state = self.state_of(user_id, name, face, now=moment)
+
+        if not state.is_online or state.checkin_at is None:
+            empty = Breakdown(
+                elapsed_minutes=0,
+                away_minutes=0,
+                billable_minutes=0,
+                capped=False,
+                billable_seconds=0,
+            )
+            return state, 0, empty, 0.0, False
+
+        detail = breakdown(
+            state,
+            moment,
+            max_session_minutes=settings.MAX_SESSION_MINUTES,
+        )
+        minutes = detail.billable_minutes
+        amount = compute_amount(minutes, settings.BILLING_RATE_PER_MINUTE)
+        payable = minutes > 0 and amount > 0
+        return state, minutes, detail, amount, payable
 
     # ------------------------------------------------------------------ #
     # 查询

@@ -206,7 +206,6 @@ def test_static_assets_are_reachable(live_server) -> None:
         "/static/idx.css",
         "/static/manager.css",
         "/static/account.css",
-        "/static/logo.png",
     ]
 
     for asset in assets:

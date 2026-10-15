@@ -757,15 +757,34 @@ def test_face_card_avatar_is_blank() -> None:
     )
 
 
-def test_sidebar_logo_gradient_survives_avatar_removal() -> None:
-    """删头像时不要误伤侧边栏 logo —— 它也用同一个紫色渐变。
+def test_branding_is_removed_from_ui() -> None:
+    """界面上的 LookUFace 品牌已按需求移除。
 
-    这是一条"反向"保护：删除与头像共享配色的规则时，
-    很容易连 logo 的样式一起删掉。
+    需求原文：「lookuface这个词 的logo和顶部栏全部去掉」。
+
+    处理范围（只删界面可见的品牌，不碰内部命名空间）：
+      * 四个页面侧边栏的 ``<span class="logo-text">LookUFace</span>``
+        连同已成空盒子的 ``<div class="logo" id="logo">`` 一并删除；
+      * 页面 ``<title>`` 里的 " | LookUFace" 后缀；
+      * 随之变成死样式的 ``.logo`` / ``.logo:hover`` / ``.logo-icon`` / ``.logo-text``。
+
+    **刻意保留** ``window.LookUFace`` —— 那是 JS 内部命名空间，
+    删掉会让所有脚本报 ``ReferenceError``（不是界面内容）。
     """
-    css = _read_ui_source("manager.css")
-    for selector in (r"\.logo-icon\s*\{", r"\.logo-text\s*\{"):
-        assert re.search(selector, css), f"侧边栏 logo 样式被误删：{selector}"
-    # 渐变配色确实还在（logo 在用）
-    assert "#4a90e2 0%, #f06292" in css, "侧边栏 logo 的渐变配色被误删"
+    for name in ("idx.html", "manager.html", "console.html", "account.html"):
+        text = (STATIC_DIR / name).read_text(encoding="utf-8")
+        assert 'class="logo-text"' not in text, f"{name} 仍残留 logo 文字元素"
+        assert 'class="logo"' not in text, f"{name} 仍残留 logo 容器"
+        assert "| LookUFace" not in text, f"{name} 的标题仍带品牌名"
+        # 侧边栏导航必须还在（只删品牌，不删导航）
+        assert 'class="nav-menu"' in text, f"{name} 的导航菜单丢失"
+
+    for name in ("idx.css", "manager.css", "account.css"):
+        css = (STATIC_DIR / name).read_text(encoding="utf-8")
+        for selector in (".logo-text", ".logo-icon", ".logo:hover"):
+            assert selector not in css, f"{name} 仍残留死样式 {selector}"
+
+    # 内部命名空间必须保留（删了会整站报错）
+    api_js = (STATIC_DIR / "api.js").read_text(encoding="utf-8")
+    assert "window.LookUFace" in api_js, "内部命名空间被误删，所有脚本都会报错"
 

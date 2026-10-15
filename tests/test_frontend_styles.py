@@ -249,20 +249,61 @@ def test_checkout_title_has_no_parentheses() -> None:
             )
 
 
+def test_future_checkout_time_is_reported_not_silently_rewritten() -> None:
+    """用户选了未来的签退时间时，必须**明确报错**，不能悄悄改成"现在"。
+
+    **这是实测的「账单突然变成全 0」元凶**，也是我一开始归因错的地方：
+
+    用户以为"选择数分钟以后"表示"结算到那个时刻"，但计费只能结算
+    **已经过去**的时间。旧实现的处理链是——
+
+      1. 前端提交时把未来值**静默改写**成"现在"（无任何提示）；
+      2. 服务端再把未来值**静默收敛**成当前时刻。
+
+    两步都无声无息，于是用户拿到 0 元账单，完全不知道发生了什么，
+    只能回来问"账单又变成全 0 了"。
+
+    现在要求：
+      * 控件上限用**服务端时刻**（``server_now``）设定，未来时刻根本选不了；
+      * 万一还是提交了未来时刻，前端必须把原因显示在弹窗里并中断提交；
+      * 不允许再出现"静默把值改掉然后继续提交"的写法。
+    """
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
+
+    # 前端必须对"晚于当前"给明确报错并中断
+    assert "签退时间不能晚于当前时刻" in handler, "前端未对未来的签退时间给出明确报错"
+    assert "errorEl.style.display = 'block'" in handler, "未把错误显示在弹窗里"
+    assert "return;" in handler, "未中断提交"
+
+    # 不允许静默改写（旧写法：把 value 直接改成 nowValue）
+    assert "customEl.value = nowValue;" not in handler, (
+        "仍在静默改写用户的未来时间 —— 这正是导致'莫名 0 元'的原因"
+    )
+
+    # 上限应来自服务端时刻，避免浏览器时钟偏差造成误判
+    assert "status.server_now" in manager_js, "未用服务端时刻校正控件上限"
+    assert "server_now" in manager_js and "customEl.max = serverMax" in manager_js
+
+    # 文案要把规则讲清楚
+    html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    assert "当前时刻或更早" in html, "界面未说明'只能填当前时刻或更早'"
+
+
 def test_frontend_clamps_stale_checkout_time_on_submit() -> None:
     """提交前必须处理已过期的签退时间。
 
     回归背景（实测）：弹窗打开时控件被填入"当时"的时间，过了约 9 分钟才点确认，
     该时间已成未来，提交被服务端拒绝：
         「当前约 03:36:59，你填的是 03:45:37」
-    前端在提交时刷新 max 并纠正过期值，服务端再收敛一次做兜底。
+    前端在提交时刷新 max，服务端对轻微时钟偏差做收敛兜底。
     """
     manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
     handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
 
     assert "customEl.max = nowValue" in handler, "提交时未重新同步时间上限"
     assert "customEl.value > nowValue" in handler, (
-        "提交时未纠正已过期的签退时间（会撞上服务端校验）"
+        "提交时未检查已过期的签退时间"
     )
 
 

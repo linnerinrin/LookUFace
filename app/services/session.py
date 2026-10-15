@@ -38,6 +38,14 @@ from app.domain.session import (
 )
 from app.logger import logger
 
+#: 允许的时钟偏差（秒）。
+#:
+#: 管理员机器比服务器快几秒是常见情况，这种"轻微未来"不该报错，
+#: 收敛到当前时刻即可。但**明显**是未来时刻就必须报错 ——
+#: 那条路径曾经是"账单突然变成全 0"的元凶：旧实现一律静默夹回"现在"，
+#: 用户以为"选择数分钟以后"能结算到那个时刻，结果拿到 0 元且毫无提示。
+CLOCK_SKEW_TOLERANCE_SECONDS = 60
+
 
 @dataclass(slots=True)
 class ActionResult:
@@ -55,6 +63,13 @@ class ActionResult:
     breakdown: Breakdown | None = None
     #: 本次会话的计费起点（结算后 state 里已清空，因此单独带出）
     checkin_at: datetime | None = None
+    #: 本次结算**实际使用的时刻**。
+    #:
+    #: 为什么不直接让前端用"现在"：用户可能自定义了签退时间（事后补签退），
+    #: 也可能服务端把未来时刻收敛成了当前时刻。把真实使用的时刻回传，
+    #: 前端才能把「签到 -> 签退 -> 计费」这条时间账原样展示出来，
+    #: 用户自己就能核对"为什么是 0 分钟"，不必回来问。
+    settled_at: datetime | None = None
 
 
 class _Debounce:
@@ -302,21 +317,23 @@ class SessionService:
     ) -> datetime:
         """校验并**归一化**自定义签退时间，返回最终用于结算的时刻。
 
-        两条规则的**处理方式刻意不同**：
+        三条规则：
 
         * **早于签到时间** -> 抛错。
-          这是真实的数据错误（会把时长算成负数），必须让用户明确修正。
+          真实的数据错误（会把时长算成负数），必须让用户明确修正。
 
-        * **晚于当前时间** -> **收敛到当前时刻**，而不是报错。
-          实测这是最常见的情况：用户打开签退弹窗时控件被填入"当时"的
-          时间，过了几分钟才点确认，那个时间点已经变成"未来"；再叠加上
-          一两分钟的时钟误差，就会撞上校验。
-          但用户的意图显然是"现在签退"，报错只会让人困惑
-          （实测错误信息："当前约 03:36:59，你填的是 03:45:37"）。
-          因此这里收敛处理，并在返回值上体现真正的结算时刻。
+        * **明显晚于当前时刻**（超过 ``CLOCK_SKEW_TOLERANCE_SECONDS``）-> 抛错。
+          实测这就是"账单突然变成全 0"的元凶：用户以为"选择数分钟以后"
+          表示"结算到那个时刻"，但计费只能结算**已经过去**的时间。
+          旧实现把未来时刻**静默夹回现在**，于是返回 0 元且没有任何提示，
+          用户自然会认为是缺陷。
 
-          注意：收敛是**安全**的 —— 未来时间只会让时长偏大，
-          收敛只会少算，绝不会多收钱。
+          现在改为明确报错，把"不能选未来"这个规则直接讲清楚。
+          注意：这不是"多收钱"的问题 —— 未来时间只会让时长偏大，
+          拒绝它只会少算，绝不会多收。
+
+        * **仅轻微晚于当前时刻**（时钟误差范围内）-> 收敛到当前时刻。
+          管理员机器比服务器快几秒是常见情况，不该因此报错。
         """
         checkin = face.checkin_time
         if checkin is not None and settle_at < checkin:
@@ -332,14 +349,31 @@ class SessionService:
             )
 
         if settle_at > now:
-            logger.info(
-                "签退时间 %s 晚于当前时刻 %s（多为弹窗打开后隔了较久才确认），"
-                "已收敛为当前时刻结算 name=%s",
-                settle_at.isoformat(sep=" "),
-                now.isoformat(sep=" "),
-                name,
+            # 轻微的时钟偏差：容忍，收敛到当前时刻
+            if (settle_at - now).total_seconds() <= CLOCK_SKEW_TOLERANCE_SECONDS:
+                logger.info(
+                    "签退时间 %s 略晚于当前时刻 %s（%s 秒内，按时钟误差处理），"
+                    "已收敛为当前时刻结算 name=%s",
+                    settle_at.isoformat(sep=" "),
+                    now.isoformat(sep=" "),
+                    CLOCK_SKEW_TOLERANCE_SECONDS,
+                    name,
+                )
+                return now
+
+            # 明显是未来时刻：明确拒绝，而不是静默夹回"现在"
+            raise ValidationError(
+                f"签退时间不能晚于当前时刻（当前 {now:%Y-%m-%d %H:%M:%S}，"
+                f"你填的是 {settle_at:%Y-%m-%d %H:%M:%S}）。"
+                f"计费只结算已经过去的时间，请填当前时刻或更早的时间。",
+                code="checkout_in_future",
+                details={
+                    "name": name,
+                    "now": now.isoformat(sep=" "),
+                    "checkout_time": settle_at.isoformat(sep=" "),
+                    "tolerance_seconds": CLOCK_SKEW_TOLERANCE_SECONDS,
+                },
             )
-            return now
 
         return settle_at
 
@@ -484,6 +518,8 @@ class SessionService:
             settled=True,
             breakdown=detail,
             checkin_at=state.checkin_at,
+            # 回传真实结算时刻：前端据此展示完整时间账
+            settled_at=moment,
         )
 
     # ------------------------------------------------------------------ #
@@ -511,6 +547,7 @@ class SessionService:
         if not state.is_online or state.checkin_at is None:
             empty = Breakdown(
                 elapsed_minutes=0,
+                elapsed_seconds=0,
                 away_minutes=0,
                 billable_minutes=0,
                 capped=False,

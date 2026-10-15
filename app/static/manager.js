@@ -504,6 +504,10 @@ function showCheckoutModal(name) {
     if (customEl) {
         customEl.value = '';
         customEl.value = toLocalInputValue(new Date());
+        // 上限 = 当前时刻：计费只能结算**已经过去**的时间，
+        // 选未来时刻是无效的（旧实现会把它静默夹回"现在"，导致莫名其妙的 0 元账单）。
+        // 这里先按本机时钟设一个上限，稍后用服务端返回的 server_now 校正，
+        // 避免浏览器时钟比服务端快而误判。
         customEl.max = toLocalInputValue(new Date());
         // 记录"用户是否手动改过"，用于区分默认值与用户意图
         customEl.dataset.edited = '0';
@@ -589,6 +593,16 @@ function showCheckoutModal(name) {
                 if (isAway || status.is_away) {
                     if (title) title.textContent = '暂离中 · 签退结算';
                 }
+                // 用服务端时刻校正控件上限：计费只能结算已经过去的时间。
+                // 若用户尚未手动改过，同时把默认值也对齐到服务端时刻，
+                // 避免本机时钟比服务端快几秒时被误判成"未来"。
+                if (customEl && status.server_now) {
+                    const serverMax = toLocalInputValue(new Date(status.server_now));
+                    customEl.max = serverMax;
+                    if (customEl.dataset.edited !== '1') {
+                        customEl.value = serverMax;
+                    }
+                }
                 preview();
             })
             .catch(function () {
@@ -631,13 +645,24 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
     //     既不受浏览器回填影响，也不受本机与服务器时钟差影响。
     //
     // 用户改过的情况仍然完整支持（事后补签退）。
+    // 只把"用户明确改过"的签退时间发给服务端；没改过就等于"现在签退"，
+    // 交给服务端用自己的当前时钟，避免浏览器回填旧值与时钟偏差。
+    //
+    // 关键：**未来时刻不再静默改写，而是明确报错**。
+    // 旧实现把用户的未来时间悄悄改成"现在"（服务端还会再收敛一次），
+    // 于是用户"选了几分钟以后"却拿到 0 元账单，且没有任何提示 ——
+    // 实测就是这样被误认为缺陷的。现在直接把原因说清楚。
     let checkoutTime = null;
     if (!away && customEl && customEl.dataset.edited === '1' && customEl.value) {
         const nowValue = toLocalInputValue(new Date());
         customEl.max = nowValue;
-        // 若用户填的时刻已超过"现在"，纠正为现在（服务端也会再做一次收敛兜底）
         if (customEl.value > nowValue) {
-            customEl.value = nowValue;
+            const message = '签退时间不能晚于当前时刻（' + nowValue.replace('T', ' ') + '）。'
+                + '计费只能结算已经过去的时间，请把签退时间改到当前时刻或更早。';
+            if (errorEl) { errorEl.textContent = message; errorEl.style.display = 'block'; }
+            LF.toast(message, true);
+            button.disabled = false;
+            return;
         }
         checkoutTime = fromLocalInputValue(customEl.value);
     }
@@ -733,8 +758,22 @@ function showPayModal(name, data) {
         if (el) el.value = text;
     };
 
+    /** 把服务端时间戳格式化成「2026/10/16 04:30:51」。 */
+    const fmtTime = (value) => {
+        if (!value) return '—';
+        const date = new Date(value);
+        if (isNaN(date.getTime())) return '—';
+        const pad = n => String(n).padStart(2, '0');
+        return date.getFullYear() + '/' + pad(date.getMonth() + 1) + '/' + pad(date.getDate())
+            + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
+            + ':' + pad(date.getSeconds());
+    };
+
     document.getElementById('payTitle').textContent = name + ' · 签退完成，待支付';
     setText('payName', name);
+    // 时间账全部来自服务端（用户的签退时间可能被自定义或被收敛）
+    setText('payCheckinAt', fmtTime(data.checkin_time));
+    setText('payCheckoutAt', fmtTime(data.checkout_time));
     setText('payElapsed', formatMinutes(elapsed));
     setText('payAway', formatMinutes(away));
     setText('payMinutes', minutes + ' 分钟（单价 ' + rate.toFixed(2) + ' 元/分钟）');
@@ -745,9 +784,23 @@ function showPayModal(name, data) {
 
     const summaryEl = document.getElementById('paySummary');
     if (summaryEl) {
-        summaryEl.textContent = '本次在场 ' + formatMinutes(elapsed)
+        let text = '本次在场 ' + formatMinutes(elapsed)
             + (away ? '（其中暂离 ' + formatMinutes(away) + '）' : '')
             + '，计费 ' + minutes + ' 分钟，应付 ¥ ' + amount.toFixed(2) + '。';
+
+        // 明确写出"为什么是 0"。
+        // 实测用户看到"全 0"会立刻认为是缺陷，但绝大多数情况是
+        // **签到到签退确实不足 1 分钟**（例如签完到 7 秒就点了签退）。
+        // 把两个时刻与计费秒数摆出来，用户自己就能核对，不必回来问。
+        if (amount <= 0) {
+            const seconds = Math.max(0, Math.floor(data.elapsed_seconds || 0));
+            text += ' 签到到签退不足 1 分钟'
+                + (seconds > 0 ? '（实际 ' + seconds + ' 秒）' : '')
+                + '，按规则不计费。'
+                + ' 若要补录较长的在场时间，可在签退弹窗里把「签退时间」'
+                + '改成真实离开的时刻，再签退一次。';
+        }
+        summaryEl.textContent = text;
     }
 
     // 二维码：占位内容「开发中」
@@ -771,10 +824,7 @@ function showPayModal(name, data) {
         payBtn.disabled = false;
     }
 
-    // 金额为 0（不足一分钟）时说明清楚，避免用户以为漏了
-    if (amount <= 0 && summaryEl) {
-        summaryEl.textContent += ' 不足 1 分钟按规则不计费，此处仅作展示。';
-    }
+    // 金额为 0 的说明已在上面写入 summaryEl
 
     modal.style.display = 'flex';
 }

@@ -159,62 +159,67 @@ def test_checkout_before_checkin_is_rejected(db_session, user, face) -> None:
     assert face.checkin_time == CHECKIN
 
 
-def test_checkout_in_future_is_clamped_not_rejected(db_session, user, face) -> None:
-    """签退时间晚于当前时刻时，应**收敛为当前时刻**而不是报错。
+def test_checkout_in_future_is_rejected(db_session, user, face) -> None:
+    """明显晚于当前时刻的签退时间必须**报错**，而不是静默夹回"现在"。
 
-    为什么改成收敛：实测最常见的触发场景是「用户打开签退弹窗时控件被填入
-    '当时'的时间，过了几分钟才点确认」—— 那个时间点已经变成未来，
-    但用户的意图明确就是"现在签退"。报错只会让人困惑
-    （实测错误信息："当前约 03:36:59，你填的是 03:45:37"）。
+    这是实测定位到的「账单突然变成全 0」元凶：
 
-    收敛是**安全**的：未来时间只会让时长偏大，收敛只会少算，绝不会多收钱。
-    真正的数据错误（早于签到时间）仍然报错，见上一个用例。
+    用户以为"选择数分钟以后"表示"结算到那个时刻"，但计费只能结算
+    **已经过去**的时间。旧实现把未来时刻静默收敛为当前时刻 ——
+    于是返回 0 元、且全程没有任何提示，用户自然会认为是缺陷。
+
+    现在改为明确报错，把"不能选未来"这条规则直接讲清楚。
+    拒绝是**安全**的：未来时间只会让时长偏大，拒绝只会少算、绝不会多收。
     """
     session_service.check_in(db_session, user_id=user.id, name=face.name, now=CHECKIN)
 
-    result = session_service.check_out(
-        db_session,
-        user_id=user.id,
-        name=face.name,
-        away=False,
-        now=NOW,
-        checkout_time=NOW + timedelta(minutes=30),
-    )
+    with pytest.raises(ValidationError) as excinfo:
+        session_service.check_out(
+            db_session,
+            user_id=user.id,
+            name=face.name,
+            away=False,
+            now=NOW,
+            checkout_time=NOW + timedelta(minutes=30),
+        )
 
-    assert result.settled is True, "应照常结算，而不是拒绝"
-    assert result.breakdown is not None
-    # 收敛到 NOW：签到是 8 小时前，所以计费就是 480 分钟（而不是 510）
-    assert result.breakdown.elapsed_minutes == 480, (
-        f"应按当前时刻（480 分钟）而不是未来时刻（510 分钟）计算，"
-        f"实际 {result.breakdown.elapsed_minutes}"
-    )
-    assert result.billing is not None
-    assert result.billing.session_minutes == 480
+    error = excinfo.value
+    assert error.code == "checkout_in_future"
+    assert "不能晚于当前时刻" in error.message
+    assert "只结算已经过去的时间" in error.message, "错误信息应说明原因"
 
+    # 拒绝时不得改变会话状态
     db_session.refresh(face)
-    assert face.is_online is False, "应当已正常签退"
+    assert face.is_online is True, "校验失败不得关闭会话"
+    assert face.checkin_time is not None, "校验失败不得清空签到时间"
 
 
-def test_clamping_never_overcharges(db_session, user, face) -> None:
-    """收敛必须只会"少算"，绝不会因为未来时间而多收钱。"""
-    session_service.check_in(db_session, user_id=user.id, name=face.name, now=CHECKIN)
+def test_future_time_never_overcharges_either_way(db_session, user, face) -> None:
+    """无论拒绝还是收敛，都不可能因为未来时间而多收钱。
 
-    clamped = session_service.check_out(
-        db_session, user_id=user.id, name=face.name, away=False, now=NOW,
-        checkout_time=NOW + timedelta(days=3),
-    )
-
-    session_service.reset()
+    这条是"安全性"的兜底证明：拿一个夸张的未来时间，
+    结果要么被拒绝（少算），要么与不填时完全一致 —— 绝不会得出更大的金额。
+    """
     session_service.check_in(db_session, user_id=user.id, name=face.name, now=CHECKIN)
     normal = session_service.check_out(
         db_session, user_id=user.id, name=face.name, away=False, now=NOW,
     )
+    assert normal.billing is not None
 
-    assert clamped.billing is not None and normal.billing is not None
-    assert clamped.billing.session_minutes == normal.billing.session_minutes, (
-        "填一个夸张的未来时间，结果应与不填完全一致（都被收敛到当前时刻）"
-    )
-    assert clamped.billing.amount == pytest.approx(normal.billing.amount)
+    session_service.reset()
+    session_service.check_in(db_session, user_id=user.id, name=face.name, now=CHECKIN)
+    try:
+        future = session_service.check_out(
+            db_session, user_id=user.id, name=face.name, away=False, now=NOW,
+            checkout_time=NOW + timedelta(days=3),
+        )
+    except ValidationError:
+        # 被拒绝 —— 少算，安全
+        return
+
+    assert future.billing is not None
+    assert future.billing.session_minutes <= normal.billing.session_minutes
+    assert future.billing.amount <= normal.billing.amount
 
 
 def test_small_clock_skew_is_tolerated(db_session, user, face) -> None:

@@ -34,7 +34,8 @@ CHROME_CANDIDATES = [
 ]
 
 PAGES = [
-    ("/static/idx.html", ["LookUFace", "实时识别"]),
+    # 品牌名 LookUFace 已按要求从界面移除，这里只断言页面自身的标题文字。
+    ("/static/idx.html", ["实时识别"]),
     ("/static/manager.html", ["仓库管理", "人脸列表"]),
     ("/static/account.html", ["账号管理"]),
     # 注意：这里只断言静态骨架里的标记。"实时日志" 卡片标题虽然存在，
@@ -239,7 +240,8 @@ def test_api_js_loaded_before_business_scripts(live_server) -> None:
     browser = _find_browser()
     assert browser is not None
 
-    # 用一个探针页面验证顺序：读取 window.LookUFace 是否存在
+    # 读取页面 DOM：api.js 先执行完才会有内容，这里以页面标题文字作为判据
+    # （品牌名 LookUFace 已按要求从界面移除，不能再拿它当标记）。
     base_url, _errors = live_server
     dom = _dump_dom(browser, base_url + "/static/idx.html")
-    assert "LookUFace" in dom or "实时识别" in dom
+    assert "实时识别" in dom

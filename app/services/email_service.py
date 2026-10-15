@@ -136,7 +136,7 @@ class EmailService:
         return f"""\
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2 style="color: #4a90e2;">LookUFace Verification Code</h2>
+            <h2 style="color: #4a90e2;">验证码</h2>
             <p>Your verification code is:</p>
             <div style="background: #f0f0f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
                 <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px;">{safe_code}</span>
@@ -154,7 +154,7 @@ class EmailService:
             raise RateLimitError(f"发送过于频繁，请 {RESEND_INTERVAL_SECONDS} 秒后再试")
 
         code = self.generate_code()
-        subject = "LookUFace Verification Code"
+        subject = "验证码"
         body = self._build_body(code)
 
         loop = asyncio.get_running_loop()

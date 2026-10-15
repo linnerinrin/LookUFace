@@ -518,8 +518,12 @@ def test_minute_precision_truncates_seconds_honestly(client, face, db_session) -
     assert body["elapsed_minutes"] in (44, 45)
 
 
-def test_checkout_rejects_future_time_over_http(client, face) -> None:
-    """签退时间晚于当前时间必须被拒（400），且会话保持在线。"""
+def test_checkout_clamps_future_time_over_http(client, face) -> None:
+    """签退时间晚于当前时刻时应收敛为当前时刻，而不是返回 400。
+
+    实测常见场景：弹窗打开时控件被填入"当时"的时间，隔了约 9 分钟才点确认，
+    该时间点已变成未来。用户的意图是"现在签退"，收敛处理才不会让人困惑。
+    """
     from datetime import datetime, timedelta
 
     client.post("/api/v1/sessions/checkin", json={"name": face.name})
@@ -529,11 +533,15 @@ def test_checkout_rejects_future_time_over_http(client, face) -> None:
         "/api/v1/sessions/checkout",
         json={"name": face.name, "away": False, "checkout_time": _local_stamp(future)},
     )
-    assert response.status_code == 400
-    assert "不能晚于当前时间" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["settled"] is True, "应照常结算"
+    # 收敛到当前时刻：刚签到就签退 -> 0 分钟，而不是把未来 1 小时算进去
+    assert body["session_minutes"] == 0
+    assert body["elapsed_minutes"] == 0
 
     status = client.post("/api/v1/sessions/status", json={"name": face.name}).json()
-    assert status["is_online"] is True, "校验失败不得关闭会话"
+    assert status["is_online"] is False, "应当已正常签退"
 
 
 def test_checkout_rejects_time_before_checkin_over_http(client, face) -> None:

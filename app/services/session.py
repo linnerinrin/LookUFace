@@ -271,8 +271,8 @@ class SessionService:
             if away:
                 return self._mark_away(db, face, user_id, name, moment, skip_debounce)
 
-            self._validate_settle_time(face, settle_at, moment, name)
-            return self._finalize(db, face, user_id, name, settle_at, reason="manual")
+            settled_at = self._validate_settle_time(face, settle_at, moment, name)
+            return self._finalize(db, face, user_id, name, settled_at, reason="manual")
 
     # ------------------------------------------------------------------ #
     # 结算时刻的校验
@@ -299,8 +299,25 @@ class SessionService:
         settle_at: datetime,
         now: datetime,
         name: str,
-    ) -> None:
-        """校验自定义签退时间是否合法。"""
+    ) -> datetime:
+        """校验并**归一化**自定义签退时间，返回最终用于结算的时刻。
+
+        两条规则的**处理方式刻意不同**：
+
+        * **早于签到时间** -> 抛错。
+          这是真实的数据错误（会把时长算成负数），必须让用户明确修正。
+
+        * **晚于当前时间** -> **收敛到当前时刻**，而不是报错。
+          实测这是最常见的情况：用户打开签退弹窗时控件被填入"当时"的
+          时间，过了几分钟才点确认，那个时间点已经变成"未来"；再叠加上
+          一两分钟的时钟误差，就会撞上校验。
+          但用户的意图显然是"现在签退"，报错只会让人困惑
+          （实测错误信息："当前约 03:36:59，你填的是 03:45:37"）。
+          因此这里收敛处理，并在返回值上体现真正的结算时刻。
+
+          注意：收敛是**安全**的 —— 未来时间只会让时长偏大，
+          收敛只会少算，绝不会多收钱。
+        """
         checkin = face.checkin_time
         if checkin is not None and settle_at < checkin:
             raise ValidationError(
@@ -313,18 +330,18 @@ class SessionService:
                     "checkout_time": settle_at.isoformat(sep=" "),
                 },
             )
-        # 容忍 60 秒时钟误差，避免"管理员机器比服务器快几秒"就报错
-        if settle_at > now + timedelta(seconds=60):
-            raise ValidationError(
-                f"签退时间不能晚于当前时间（当前约 {now:%Y-%m-%d %H:%M:%S}，"
-                f"你填的是 {settle_at:%Y-%m-%d %H:%M:%S}）",
-                code="checkout_in_future",
-                details={
-                    "name": name,
-                    "now": now.isoformat(sep=" "),
-                    "checkout_time": settle_at.isoformat(sep=" "),
-                },
+
+        if settle_at > now:
+            logger.info(
+                "签退时间 %s 晚于当前时刻 %s（多为弹窗打开后隔了较久才确认），"
+                "已收敛为当前时刻结算 name=%s",
+                settle_at.isoformat(sep=" "),
+                now.isoformat(sep=" "),
+                name,
             )
+            return now
+
+        return settle_at
 
     def _mark_away(
         self,

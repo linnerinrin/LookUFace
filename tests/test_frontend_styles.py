@@ -254,6 +254,58 @@ def test_payment_placeholder_page_exists() -> None:
     assert "pay-dev.html" in manager_js, "支付弹窗必须把链接指向 pay-dev.html"
 
 
+def test_payment_placeholder_page_has_no_css_or_script() -> None:
+    """占位页按需求**不加任何样式**，只有「开发中」三个字。
+
+    要求原文：「开发中的那个二维码和 html 不要加 css，直接写三个字开发中就行了」。
+    """
+    page = STATIC_DIR / "pay-dev.html"
+    text = page.read_text(encoding="utf-8")
+
+    assert "<style" not in text, "占位页不应包含 <style>"
+    assert "style=" not in text, "占位页不应包含内联 style 属性"
+    assert "<script" not in text, "占位页不应包含脚本"
+    assert "class=" not in text, "占位页不应引用 CSS 类"
+
+    # 正文里必须直接出现「开发中」
+    body = text[text.find("<body>"):text.find("</body>")]
+    assert "开发中" in body, "占位页正文应直接写「开发中」"
+
+    # 应当非常精简（没有样式也就没有多余内容）
+    assert len(text) < 400, f"占位页过于臃肿（{len(text)} 字符），可能又加回了样式"
+
+
+def test_qrcode_placeholder_is_plain_text_only() -> None:
+    """二维码占位图只写「开发中」三个字，不加任何装饰。
+
+    要求原文同上。这里检查生成的 SVG **只有一行文字**：
+    不得有矩形、边框、配色、说明文字等装饰元素。
+    """
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+
+    match = re.search(r"function buildPlaceholderQrSvg[\s\S]*?\n\}", manager_js)
+    assert match, "未找到二维码占位图生成函数"
+    body = match.group(0)
+
+    # 必须包含「开发中」
+    assert "开发中" in body, "二维码占位内容必须包含「开发中」"
+
+    # 不得有任何装饰元素
+    for forbidden in ("<rect", "<circle", "<path", "<line", "stroke", "fill=", "font-weight"):
+        assert forbidden not in body, f"二维码占位图不应包含装饰元素：{forbidden}"
+
+    # 只允许一个 <text> 元素
+    assert body.count("<text") == 1, "二维码占位图应只有一行文字"
+    assert "支付通道未接入" not in body, "不应再附加说明文字"
+
+
+def test_pay_modal_has_no_extra_caption_under_qrcode() -> None:
+    """支付弹窗里二维码下方不应再有额外的说明文案。"""
+    html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    assert "业务开发中" not in html, "不应再显示「二维码内容为占位（业务开发中）」这类说明"
+    assert "支付通道未接入" not in html, "不应再显示「支付通道未接入」这类说明"
+
+
 def test_qrcode_placeholder_says_under_development() -> None:
     """二维码内容为占位，必须写明「开发中」。"""
     manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")

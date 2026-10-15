@@ -202,6 +202,11 @@ class SessionStatusResponse(BaseModel):
     preview_minutes: int = 0
     online_time: int = 0
     away_timeout_minutes: int = 0
+    #: 计费算式明细，便于排查「为什么是 0 分钟」
+    elapsed_minutes: int = 0
+    away_minutes: int = 0
+    rate_per_minute: float = 0.0
+    amount: float = 0.0
 
 
 class CheckInResponse(BaseModel):
@@ -222,6 +227,16 @@ class CheckOutResponse(BaseModel):
     amount: float = 0.0
     is_online: bool = False
     is_away: bool = False
+    #: 本次动作是「暂离」还是「签退结算」。
+    #: 前端必须据此区分提示文案 —— 暂离不结算，此时 session_minutes/amount 必然为 0。
+    is_away_action: bool = False
+    #: 是否真的发生了结算（暂离、重复请求都不会结算）
+    settled: bool = False
+    #: 计费算式明细，便于排查「为什么是 0 分钟」
+    checkin_time: datetime | None = None
+    elapsed_minutes: int = 0
+    away_minutes: int = 0
+    rate_per_minute: float = 0.0
 
 
 class BillingQuoteRequest(BaseModel):
@@ -239,8 +254,21 @@ class BillingQuoteResponse(BaseModel):
     minutes: int
     amount: float
     rate_per_minute: float
-    pay_url: str
-    qrcode_url: str
+    #: 二维码与支付链接。金额为 0 或未签到时**故意留空** ——
+    #: 此时没有应付金额，不应该给出付款入口。
+    qrcode_url: str = ""
+    pay_url: str = ""
+    #: 是否存在应付金额（前端据此决定是否显示二维码/支付入口）
+    payable: bool = False
+    #: 是否正在计时（未计时则谈不上"在场时间"）
+    is_online: bool = False
+    is_away: bool = False
+    checkin_time: datetime | None = None
+    #: 计费算式明细：已流逝时间、暂离时间、实际计费分钟数
+    elapsed_minutes: int = 0
+    away_minutes: int = 0
+    #: 展示用文案（例如「本次在场 1 小时 5 分钟（其中暂离 20 分钟），应付 22.50 元」）
+    summary: str = ""
 
 
 # --------------------------------------------------------------------------- #

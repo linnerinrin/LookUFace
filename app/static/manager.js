@@ -273,6 +273,12 @@ function renderFaces(faces) {
             ? `<button class="btn-checkout" data-action="checkout">签退</button>`
             : `<button class="btn-checkin" data-action="checkin">签到</button>`;
 
+        // 只有正在计时的人才有「账」可看；离线后不再显示账单入口
+        // （离线时接口也会返回 payable=false 并留空二维码与支付链接）。
+        const billingBtn = face.is_online
+            ? `<button class="btn-billing" data-action="billing">账单</button>`
+            : '';
+
         // 注意：名字只进 data-name 属性（经 escapeHtml 处理），绝不拼进 onclick。
         // 旧版把名字插进 onclick="f('...')" 且只做了 \' 转义，可被注入。
         html += `
@@ -289,7 +295,7 @@ function renderFaces(faces) {
                     <button class="btn-preview" data-action="preview">预览</button>
                     <button class="btn-modify" data-action="modify">修改</button>
                     ${onlineBtn}
-                    <button class="btn-billing" data-action="billing">账单</button>
+                    ${billingBtn}
                     <button class="btn-delete" data-action="delete">删除</button>
                 </div>
             </div>
@@ -436,27 +442,90 @@ function showCheckoutModal(name) {
     const face = facesData.find(f => f.name === name);
     if (!face) return;
 
-    const defaultAway = face.is_online && !face.is_away;
-    document.getElementById('checkoutAway').checked = defaultAway;
-    const title = document.querySelector('#checkoutModal .modal-header h3');
-    if (title) title.textContent = defaultAway ? '暂离' : '签退结算';
+    // ── 关键修复 ──────────────────────────────────────────────────────────
+    // 旧版把「在线且未暂离」默认勾选为「暂离」：
+    //     const defaultAway = face.is_online && !face.is_away;
+    //     document.getElementById('checkoutAway').checked = defaultAway;
+    // 而「暂离」走的是不结算的分支，返回的 session_minutes / amount 必然为 0，
+    // 于是用户点「确认签退」看到的是「0 分钟 0 元」；
+    // 第二次打开时标题变成「签退结算」但复选框**没有复位**，仍是勾选状态，
+    // 再次提交依然走暂离分支 —— 表现为「无论多久都是 0 分钟 0 元」。
+    //
+    // 现在：默认永远是「签退结算」（复选框不勾），暂离必须由用户显式勾选。
+    const awayCheckbox = document.getElementById('checkoutAway');
+    if (awayCheckbox) awayCheckbox.checked = false;
+
+    const isOnline = !!face.is_online;
+    const isAway = !!face.is_away;
 
     document.getElementById('checkoutCheckinTime').value = face.checkin_time
         ? new Date(face.checkin_time).toLocaleString()
         : '未签到';
 
-    const label = document.querySelector('#checkoutModal .form-group label[for="checkoutDuration"]');
-    if (label) {
-        label.textContent = defaultAway ? '暂离时长（分钟，仅提示）' : '本次在线时长（分钟，服务端计算）';
-    }
+    // 在场时间改为只读展示，且由服务端 /sessions/status 回填 ——
+    // 前端本地根据 checkin_time 算出来的值可能与服务端不一致（时钟、暂离扣除）。
+    const durationEl = document.getElementById('checkoutDuration');
+    if (durationEl) durationEl.value = isOnline ? '计算中…' : '未在计时';
 
-    let defaultDuration = defaultAway ? 30 : 60;
-    if (face.checkin_time && !defaultAway) {
-        defaultDuration = Math.floor((Date.now() - new Date(face.checkin_time).getTime()) / 60000);
+    const title = document.getElementById('checkoutTitle');
+    const button = document.getElementById('confirmCheckoutBtn');
+    const hint = document.getElementById('checkoutHint');
+
+    if (!isOnline) {
+        // 未在计时：既不能签退也不能暂离
+        if (title) title.textContent = '未在计时';
+        if (button) {
+            button.textContent = '未在计时，无需签退';
+            button.disabled = true;
+        }
+        if (hint) hint.textContent = '该人脸当前没有进行中的会话。请先签到后再操作。';
+    } else {
+        if (title) title.textContent = isAway ? '暂离中 · 签退结算' : '签退结算';
+        if (button) {
+            button.textContent = '确认签退结算';
+            button.disabled = false;
+        }
+        if (hint) {
+            hint.textContent = '在场时长与金额完全由服务端按签到时间计算，前端不参与。'
+                + '勾选「仅标记暂离」则不会结算，归位后继续计时。';
+        }
     }
-    document.getElementById('checkoutDuration').value = defaultDuration;
 
     document.getElementById('checkoutModal').style.display = 'flex';
+
+    // 用服务端数据回填在场时间与明细
+    if (isOnline) {
+        LF.api.post('/sessions/status', { name: name })
+            .then(function (status) {
+                if (checkoutTargetName !== name) return;  // 期间切换了对象
+                if (durationEl && status.is_online) {
+                    durationEl.value = formatMinutes(status.elapsed_minutes)
+                        + '（计费 ' + status.preview_minutes + ' 分钟）';
+                }
+                if (hint) {
+                    hint.textContent =
+                        '在场 ' + formatMinutes(status.elapsed_minutes)
+                        + (status.away_minutes ? '，其中暂离 ' + formatMinutes(status.away_minutes) : '')
+                        + '；计费 ' + status.preview_minutes + ' 分钟，应付 ¥ '
+                        + (status.amount || 0).toFixed(2)
+                        + '。勾选「仅标记暂离」则不结算。';
+                }
+                if (isAway || status.is_away) {
+                    if (title) title.textContent = '暂离中 · 签退结算';
+                }
+            })
+            .catch(function () {
+                if (durationEl) durationEl.value = '暂时取不到（以签退结果为准）';
+            });
+    }
+}
+
+/** 把分钟数格式化成「X 小时 Y 分钟」。 */
+function formatMinutes(totalMinutes) {
+    const total = Math.max(0, Math.floor(Number(totalMinutes) || 0));
+    const hours = Math.floor(total / 60);
+    const mins = total % 60;
+    return hours ? (hours + ' 小时 ' + mins + ' 分钟') : (mins + ' 分钟');
 }
 
 
@@ -471,19 +540,34 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
     button.disabled = true;
 
     try {
-        // 说明：旧版会把「本次在线时长」当作 away_time / online_time 传给后端，
-        // 而时长与金额现在完全由服务端按数据库时间戳计算，前端不再参与。
+        // 时长与金额完全由服务端按数据库时间戳计算，前端不参与。
         const data = await LF.api.post('/sessions/checkout', {
             name: checkoutTargetName,
             away: away
         });
-        if (data.success) {
-            LF.toast(away
-                ? `已暂离，超过 ${settingsAwayTimeout()} 分钟未归将自动签退`
-                : `签退成功，本次 ${data.session_minutes} 分钟，应付 ${data.amount.toFixed(2)} 元`,
-                false);
-        } else {
+
+        // 必须区分「暂离」与「签退结算」：
+        // 暂离不结算，此时 session_minutes / amount 必然是 0，
+        // 若按签退文案展示就会误导为「0 分钟 0 元」。
+        const isAwayAction = data.is_away_action === true || away;
+        const settled = data.settled === true;
+
+        if (data.success === false) {
             LF.toast(data.message, true);
+        } else if (isAwayAction && !settled) {
+            LF.toast(
+                data.message + '（暂离不结算，归位后继续计时）',
+                false
+            );
+        } else if (settled) {
+            LF.toast(
+                `签退成功：在场 ${formatMinutes(data.elapsed_minutes)}` +
+                (data.away_minutes ? `（其中暂离 ${formatMinutes(data.away_minutes)}）` : '') +
+                `，计费 ${data.session_minutes} 分钟，应付 ¥ ${(data.amount || 0).toFixed(2)}`,
+                false
+            );
+        } else {
+            LF.toast(data.message, false);
         }
     } catch (err) {
         LF.toast(err.message || '操作失败', true);
@@ -494,14 +578,8 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
     }
 });
 
-/** 暂离超时提示文案；由 /sessions/status 缓存，默认 30。 */
-let awayTimeoutMinutes = 30;
-function settingsAwayTimeout() {
-    return awayTimeoutMinutes;
-}
 
-
-/* ==================== 计费二维码 ==================== */
+/* ==================== 账单 ==================== */
 
 /**
  * 生成并展示账单二维码。
@@ -510,20 +588,40 @@ function settingsAwayTimeout() {
  * 旧版是把前端输入框里的「本次在线时长」当参数传给 /check/pay，
  * 既能免单也能超收，且前端根本没有调用入口。
  */
+/**
+ * 展示账单：**在场时间 + 应付价格**。
+ *
+ * 按需求：只有存在应付金额时才显示二维码与支付链接；
+ * 金额为 0（未计时 / 不足一分钟 / 已签退离线）时，付款区整体隐藏，
+ * 只显示在场时间与价格说明 —— 避免"0 元也能出账"。
+ */
 async function showBillingModal(name) {
     const modal = document.getElementById('billingModal');
+    if (!modal) return;
+
+    const paySection = document.getElementById('billingPaySection');
+    const noPaySection = document.getElementById('billingNoPaySection');
+    const noPayNotice = document.getElementById('billingNoPayNotice');
     const qrcode = document.getElementById('billingQrcode');
     const hint = document.getElementById('billingQrcodeHint');
     const payBtn = document.getElementById('billingPayLinkBtn');
+    const summaryEl = document.getElementById('billingSummary');
+    const awayGroup = document.getElementById('billingAwayGroup');
 
-    if (!modal) return;
-
+    // 打开时先清空，避免显示上一个人的残留
     document.getElementById('billingName').value = name;
+    document.getElementById('billingTitle').textContent = name + ' 的账单';
+    document.getElementById('billingElapsed').value = '计算中…';
     document.getElementById('billingMinutes').value = '计算中…';
     document.getElementById('billingAmount').value = '计算中…';
+    document.getElementById('billingAway').value = '—';
+    if (summaryEl) summaryEl.textContent = '';
+    if (awayGroup) awayGroup.style.display = 'none';
+    paySection.style.display = 'none';
+    noPaySection.style.display = 'none';
     qrcode.style.display = 'none';
-    hint.style.display = 'block';
-    hint.textContent = '正在生成二维码…';
+    qrcode.removeAttribute('src');
+    hint.textContent = '';
     payBtn.disabled = true;
     payBtn.dataset.payUrl = '';
     modal.style.display = 'flex';
@@ -531,26 +629,50 @@ async function showBillingModal(name) {
     try {
         const quote = await LF.api.post('/billing/quote', { name: name });
 
-        document.getElementById('billingMinutes').value =
-            quote.minutes + ' 分钟（单价 ' + quote.rate_per_minute.toFixed(2) + ' 元/分钟）';
-        document.getElementById('billingAmount').value = '¥ ' + quote.amount.toFixed(2);
-        document.getElementById('billingTitle').textContent = name + ' 的账单';
+        document.getElementById('billingElapsed').value = quote.is_online
+            ? formatMinutes(quote.elapsed_minutes)
+            : (quote.elapsed_minutes ? formatMinutes(quote.elapsed_minutes) : '未在计时');
+        document.getElementById('billingAway').value = formatMinutes(quote.away_minutes);
+        if (awayGroup) awayGroup.style.display = quote.away_minutes > 0 ? '' : 'none';
 
-        if (quote.qrcode_url) {
-            if (qrcode.dataset.objectUrl) URL.revokeObjectURL(qrcode.dataset.objectUrl);
+        document.getElementById('billingMinutes').value =
+            quote.minutes + ' 分钟（单价 ' + (quote.rate_per_minute || 0).toFixed(2) + ' 元/分钟）';
+        document.getElementById('billingAmount').value = '¥ ' + (quote.amount || 0).toFixed(2);
+
+        if (summaryEl) summaryEl.textContent = quote.summary || '';
+
+        if (quote.payable && quote.qrcode_url) {
+            // 有应付金额：开放二维码与支付链接
             qrcode.src = quote.qrcode_url;
             qrcode.style.display = 'block';
-            hint.style.display = 'none';
+            hint.textContent = '扫码支付 ¥ ' + (quote.amount || 0).toFixed(2);
+            payBtn.dataset.payUrl = quote.pay_url || '';
+            payBtn.disabled = !quote.pay_url;
+            paySection.style.display = '';
+            noPaySection.style.display = 'none';
         } else {
-            hint.textContent = '二维码生成失败，可使用支付链接';
+            // 无应付金额：不出二维码、不给支付链接
+            paySection.style.display = 'none';
+            noPaySection.style.display = '';
+            if (noPayNotice) {
+                noPayNotice.textContent = quote.payable === false
+                    ? (quote.summary || '当前没有应付金额。')
+                    : '当前没有应付金额。';
+            }
+            qrcode.style.display = 'none';
+            qrcode.removeAttribute('src');
+            hint.textContent = '';
+            payBtn.dataset.payUrl = '';
+            payBtn.disabled = true;
         }
-
-        payBtn.dataset.payUrl = quote.pay_url || '';
-        payBtn.disabled = !quote.pay_url;
     } catch (err) {
+        document.getElementById('billingElapsed').value = '—';
         document.getElementById('billingMinutes').value = '—';
         document.getElementById('billingAmount').value = '—';
-        hint.textContent = '生成失败：' + err.message;
+        if (summaryEl) summaryEl.textContent = '获取账单失败：' + err.message;
+        paySection.style.display = 'none';
+        noPaySection.style.display = '';
+        if (noPayNotice) noPayNotice.textContent = '获取账单失败：' + err.message;
         LF.log.error('生成账单失败: ' + err.message);
     }
 }
@@ -591,16 +713,6 @@ document.addEventListener('keydown', function(e) {
 async function init() {
     await checkBackend();
     updateUIAfterLoginChange();
-
-    // 从服务端读取暂离超时，避免前端硬编码文案与服务端不一致
-    if (LF.auth.isLoggedIn()) {
-        try {
-            const version = await LF.api.get('/version', { skipAuth: true });
-            if (typeof version.away_timeout_minutes === 'number') {
-                awayTimeoutMinutes = version.away_timeout_minutes;
-            }
-        } catch (err) { /* 取不到就用默认值 */ }
-    }
 }
 
 document.getElementById('refreshBtn').onclick = () => loadFaces();
@@ -612,15 +724,26 @@ setInterval(() => {
     }
 }, 30000);
 
-document.getElementById('checkoutAway')?.addEventListener('change', function() {
-    const label = document.querySelector('#checkoutModal .form-group label[for="checkoutDuration"]');
-    const title = document.querySelector('#checkoutModal .modal-header h3');
+// 「仅标记暂离」勾选状态变化时，同步标题与按钮文案。
+// 旧版这里改的是 label 文案（for="checkoutDuration"），但该 label 在新结构里
+// 已改为只读展示，因此改为同步真正会变化的两处：标题与确认按钮。
+document.getElementById('checkoutAway')?.addEventListener('change', function () {
+    const title = document.getElementById('checkoutTitle');
+    const button = document.getElementById('confirmCheckoutBtn');
+    const hint = document.getElementById('checkoutHint');
+    const face = facesData.find(f => f.name === checkoutTargetName);
+    const isAwayNow = !!(face && face.is_away);
+
     if (this.checked) {
-        if (label) label.textContent = '暂离时长（分钟）';
-        if (title) title.textContent = '暂离';
+        if (title) title.textContent = '标记暂离';
+        if (button) button.textContent = '确认暂离（不结算）';
+        if (hint) hint.textContent = '暂离不会结算、也不会清零计时；归位后继续累计。'
+            + '注意：暂离超过超时时长会被自动签退结算。';
     } else {
-        if (label) label.textContent = '本次在线时长（分钟）';
-        if (title) title.textContent = '签退结算';
+        if (title) title.textContent = isAwayNow ? '暂离中 · 签退结算' : '签退结算';
+        if (button) button.textContent = '确认签退结算';
+        if (hint) hint.textContent = '在场时长与金额完全由服务端按签到时间计算，前端不参与。'
+            + '勾选「仅标记暂离」则不会结算，归位后继续计时。';
     }
 });
 

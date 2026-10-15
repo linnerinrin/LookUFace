@@ -17,11 +17,26 @@ REM    * Dependency install is OPTIONAL: if the venv already has everything,
 REM      nothing is downloaded. A failed install only produces a warning, so
 REM      the script still works offline.
 REM    * The occupied-port check only reports; it never kills processes.
+REM    * PORT is read from .env (falling back to 8835) instead of being
+REM      hard-coded here. Previously this file hard-coded 8000, so after
+REM      changing PORT in .env it kept checking and reporting 8000, and the
+REM      printed URL did not match the port the app actually listened on.
 REM ===========================================================================
 
 cd /d "%~dp0"
 set "VENV_PY=%~dp0venv\Scripts\python.exe"
 set "NEED_INSTALL=0"
+
+REM ---- 端口：优先取 .env 里的 PORT，取不到则用默认值 --------------------------
+set "PORT=8835"
+if exist "%~dp0.env" (
+    for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0.env") do (
+        if /i "%%a"=="PORT" set "PORT=%%b"
+    )
+)
+REM 去掉可能的行尾空格/引号（.env 里一般没有，但避免手改后踩坑）
+set "PORT=%PORT: =%"
+set "PORT=%PORT:"=%"
 
 echo [1/4] Checking Python...
 if not exist "%VENV_PY%" goto CREATE_VENV
@@ -87,10 +102,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [4/4] Checking port 8000...
-for /f "tokens=5" %%i in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENING"') do (
+echo [4/4] Checking port %PORT%...
+for /f "tokens=5" %%i in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do (
     echo.
-    echo [ERROR] Port 8000 is already in use by PID %%i.
+    echo [ERROR] Port %PORT% is already in use by PID %%i.
     echo         Close that process, or change PORT in .env and run again.
     echo.
     pause
@@ -100,8 +115,8 @@ for /f "tokens=5" %%i in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENIN
 echo.
 echo ============================================
 echo  Starting service...
-echo  App: http://localhost:8000/static/idx.html
-echo  API: http://localhost:8000/docs
+echo  App: http://localhost:%PORT%/static/idx.html
+echo  API: http://localhost:%PORT%/docs
 echo ============================================
 echo.
 

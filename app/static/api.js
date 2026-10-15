@@ -144,7 +144,7 @@
         if (window.location.protocol === 'file:') {
             return Promise.resolve(
                 '页面是用 file:// 直接打开的，这样所有 /api/... 请求都会指向本地文件系统，' +
-                '必然失败。请先运行 start.bat，再访问 http://127.0.0.1:8000/static/idx.html'
+                '必然失败。请先运行 start.bat，再访问 http://127.0.0.1:8835/static/idx.html'
             );
         }
 
@@ -186,9 +186,10 @@
             lines.push('  1. 服务是否在运行：在项目目录执行 start.bat，确认窗口没有闪退');
             lines.push('  2. 浏览器代理：若系统代理指向一个没有在运行的程序（例如 127.0.0.1:7890），');
             lines.push('     请关闭代理（Windows 设置 → 网络和 Internet → 代理 → 关闭「使用代理服务器」）');
-            lines.push('  3. 访问方式：请使用 http://127.0.0.1:8000/static/idx.html，');
-            lines.push('     不要用 file:// 打开页面，也不要用 192.168.x.x / 机器名访问');
-            lines.push('     （服务端 ALLOWED_ORIGINS 只允许 127.0.0.1 与 localhost）');
+            lines.push('  3. 访问方式：请使用 http://127.0.0.1:8835/static/idx.html，');
+            lines.push('     端口必须与 .env 里的 PORT 一致；不要用 file:// 打开页面，');
+            lines.push('     也不要用 192.168.x.x / 机器名访问');
+            lines.push('     （服务端 ALLOWED_ORIGINS 只允许 127.0.0.1 与 localhost 的对应端口）');
 
             return lines.join('\n');
         });

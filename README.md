@@ -32,7 +32,11 @@ python -m app                 # 会尝试自动打开浏览器
 python -m app --no-browser    # 不打开浏览器
 ```
 
-访问 <http://localhost:8000/static/idx.html>，API 文档在 <http://localhost:8000/docs>。
+访问 <http://localhost:8835/static/idx.html>，API 文档在 <http://localhost:8835/docs>。
+
+> 端口取自 `.env` 的 `PORT`（默认 `8835`）。`start.bat` 会读取该值来检查端口占用并打印访问地址，
+> 因此改端口只需改 `.env`。**请同时修改同一文件里的 `ALLOWED_ORIGINS`**，
+> 否则浏览器会按跨源拒绝请求（表现为 `Failed to fetch`）。
 
 ### 容器运行
 

@@ -1,85 +1,120 @@
 @echo off
-chcp 65001 >nul
-title LookUFace
+chcp 65001 >nul 2>&1
 
 REM ===========================================================================
-REM  LookUFace 启动脚本
+REM  LookUFace launcher
 REM
-REM  相对旧版的修复：
-REM    1. 旧版先 taskkill 占用 8000 端口的进程 —— 会误杀其他程序，
-REM       且对系统进程会失败并留下半死状态。现在只在端口被占时提示并退出。
-REM    2. 旧版每次都执行 pip install -r requirements.txt，离线环境下
-REM       会长时间重试甚至失败。现在仅在依赖缺失时才安装。
-REM    3. 旧版不校验 SECRET_KEY，配置错时在应用内抛一堆 pydantic 错误。
-REM       现在先跑一次配置预检，报错更直观。
-REM    4. 使用 python -m app 作为统一入口（与 pyproject 的 console script 一致）。
+REM  This file MUST keep CRLF line endings. cmd.exe's batch parser requires
+REM  CRLF; with LF-only line endings REM comments and commands get split
+REM  byte-by-byte and the script dies immediately (window flashes and closes).
+REM
+REM  Notes:
+REM    * All Python is invoked as venv\Scripts\python.exe directly, never as a
+REM      bare "python". On many machines "python" resolves to an unrelated
+REM      virtualenv (e.g. an editor or launcher bundle), which would install
+REM      dependencies into the wrong interpreter.
+REM    * Dependency install is OPTIONAL: if the venv already has everything,
+REM      nothing is downloaded. A failed install only produces a warning, so
+REM      the script still works offline.
+REM    * The occupied-port check only reports; it never kills processes.
 REM ===========================================================================
 
 cd /d "%~dp0"
+set "VENV_PY=%~dp0venv\Scripts\python.exe"
+set "NEED_INSTALL=0"
 
-echo [1/4] 检查 Python 环境...
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [错误] 未找到 Python，请先安装 Python 3.11 并加入 PATH。
-    pause
-    exit /b 1
+echo [1/4] Checking Python...
+if not exist "%VENV_PY%" goto CREATE_VENV
+"%VENV_PY%" --version >nul 2>&1
+if errorlevel 1 (
+    echo        venv is broken, it will be recreated.
+    rmdir /s /q "venv" >nul 2>&1
+    goto CREATE_VENV
 )
+for /f "delims=" %%v in ('"%VENV_PY%" --version 2^>^&1') do echo        venv OK: %%v
+goto CHECK_DEPS
 
-echo [2/4] 准备虚拟环境...
-if not exist "venv\Scripts\activate.bat" (
-    echo 正在创建虚拟环境...
-    python -m venv venv
-    if %errorlevel% neq 0 (
-        echo [错误] 虚拟环境创建失败。
-        pause
-        exit /b 1
-    )
-)
-call venv\Scripts\activate.bat
-
-echo [3/4] 检查依赖...
-python -c "import fastapi, cv2, mediapipe, sqlalchemy, jose, qrcode" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo 依赖不完整，开始安装（需要网络）...
-    pip install -e .
-    if %errorlevel% neq 0 (
-        echo [错误] 依赖安装失败。若处于离线环境，请在有网络时先执行：pip install -e .
-        pause
-        exit /b 1
-    )
-) else (
-    echo 依赖已就绪。
-)
-
-echo [4/4] 校验配置...
-python -c "from app.config import settings; print('配置 OK ->', settings.APP_NAME, settings.APP_VERSION)" 
-if %errorlevel% neq 0 (
+:CREATE_VENV
+echo        No usable venv found, creating one...
+set "BASE_PY=py"
+where py >nul 2>&1
+if errorlevel 1 set "BASE_PY=python"
+%BASE_PY% -m venv venv
+if not exist "%VENV_PY%" (
     echo.
-    echo [错误] 配置校验失败。请检查 .env 是否存在且已填写 SECRET_KEY。
-    echo        可复制 .env.example 为 .env 后修改。
-    echo        生成密钥：python -c "import secrets; print(secrets.token_urlsafe(64))"
+    echo [ERROR] Failed to create the virtual environment.
+    echo         Install Python 3.11 and make sure "py" or "python" is on PATH.
+    echo.
+    pause
+    exit /b 1
+)
+set "NEED_INSTALL=1"
+
+:CHECK_DEPS
+echo [2/4] Checking dependencies...
+"%VENV_PY%" -c "import fastapi, cv2, mediapipe, sqlalchemy, jose, qrcode" >nul 2>&1
+if errorlevel 1 set "NEED_INSTALL=1"
+
+if "%NEED_INSTALL%"=="0" (
+    echo        All dependencies present.
+    goto CHECK_CONFIG
+)
+
+echo        Missing dependencies, installing (network required)...
+"%VENV_PY%" -m pip install -e . --disable-pip-version-check
+"%VENV_PY%" -c "import fastapi, cv2, mediapipe, sqlalchemy, jose, qrcode" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [WARNING] Some dependencies are still missing.
+    echo           The service may fail to start. When you have network access, run:
+    echo               venv\Scripts\python.exe -m pip install -e .
+    echo.
+) else (
+    echo        Dependencies installed.
+)
+
+:CHECK_CONFIG
+echo [3/4] Validating configuration...
+"%VENV_PY%" -c "from app.config import settings; print('       Config OK ->', settings.APP_NAME, settings.APP_VERSION)"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Configuration check failed.
+    echo         Copy .env.example to .env and set SECRET_KEY.
+    echo         Generate one with:
+    echo             venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
+    echo.
     pause
     exit /b 1
 )
 
-REM 端口占用检查：只提示，不杀进程
+echo [4/4] Checking port 8000...
 for /f "tokens=5" %%i in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENING"') do (
-    echo [警告] 端口 8000 已被进程 %%i 占用。
-    echo         请先关闭该进程，或修改 .env 中的 PORT 后重试。
+    echo.
+    echo [ERROR] Port 8000 is already in use by PID %%i.
+    echo         Close that process, or change PORT in .env and run again.
+    echo.
     pause
     exit /b 1
 )
 
 echo.
 echo ============================================
-echo  服务启动中，稍后会自动打开浏览器...
-echo  访问地址：http://localhost:8000/static/idx.html
-echo  API 文档：http://localhost:8000/docs
+echo  Starting service...
+echo  App: http://localhost:8000/static/idx.html
+echo  API: http://localhost:8000/docs
 echo ============================================
 echo.
 
-python -m app
+"%VENV_PY%" -m app
+set "EXITCODE=%errorlevel%"
 
 echo.
-echo 服务已停止。
+if not "%EXITCODE%"=="0" (
+    echo [ERROR] The service exited with code %EXITCODE%.
+    echo         Scroll up to see the traceback.
+) else (
+    echo Service stopped.
+)
+echo.
 pause
+exit /b %EXITCODE%

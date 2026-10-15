@@ -478,12 +478,18 @@ function showCheckoutModal(name) {
     }
 
     // 默认签退时间 = 现在（精确到秒），可由用户改成真实离开时间。
-    // 注意：max 只是给控件一个提示，且会在**提交时重新同步** ——
-    // 否则弹窗打开太久（实测 9 分钟）后，"当时"填进去的时间会变成未来，
-    // 提交时撞上校验。服务端也会把未来时刻收敛为当前时刻做兜底。
+    //
+    // 这里必须**先清空再赋值**：Chrome 的"表单值恢复"会在页面加载/重开弹窗时
+    // 把上一次的值塞回 datetime-local 控件，并且会覆盖脚本刚赋的值。
+    // 实测后果很严重 —— 控件里留着上一次的旧时刻，用户直接点确认，
+    // 服务端就按那个旧时刻结算，于是"签退后账单全是 0"
+    //（日志里可见：计费秒数=3 / 11）。
     if (customEl) {
+        customEl.value = '';
         customEl.value = toLocalInputValue(new Date());
         customEl.max = toLocalInputValue(new Date());
+        // 记录"用户是否手动改过"，用于区分默认值与用户意图
+        customEl.dataset.edited = '0';
     }
 
     if (!isOnline) {
@@ -547,10 +553,16 @@ function showCheckoutModal(name) {
     }
 
     if (isOnline) {
-        // 输入变化时即时预演
+        // 输入变化时即时预演，并标记"用户已手动改过"。
+        // 这个标记用于提交时区分"用户明确指定了时间"与"还是默认值" ——
+        // 后者不该传给服务端（浏览器可能回填旧值，见上面的说明）。
         if (customEl) {
-            customEl.oninput = preview;
-            customEl.onchange = preview;
+            const markEdited = function () {
+                customEl.dataset.edited = '1';
+                preview();
+            };
+            customEl.oninput = markEdited;
+            customEl.onchange = markEdited;
         }
         // 用服务端的权威数据回填（含暂离扣除、费率、签到时间）
         LF.api.post('/sessions/status', { name: name })
@@ -591,27 +603,29 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
     if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
     button.disabled = true;
 
-    // 提交前**重新同步控件上限与默认值**。
+    // 只在**用户明确改过**签退时间时才把它传给服务端。
     //
-    // 实测问题：弹窗打开时控件被填入"当时"的时间，若隔了几分钟才点确认，
-    // 那个时间点已经变成未来，提交时被服务端拒绝
-    //（"当前约 03:36:59，你填的是 03:45:37"）。
-    // 这里做两件事：
-    //   1. 刷新 max，避免控件继续允许选未来时间；
-    //   2. 若当前值已超过"现在"，且用户没有手动改过更早的时间，
-    //      就把它改成"现在" —— 这正是用户点确认时的真实意图。
+    // 为什么要这么严格：
+    //   * Chrome 的"表单值恢复"会把上一次的值回填进 datetime-local 控件，
+    //     甚至覆盖脚本刚赋的默认值。实测后果是：控件里留着上一次的旧时刻，
+    //     用户直接点确认 -> 服务端按那个旧时刻结算 -> "账单全是 0"
+    //     （日志里可见 计费秒数=3 / 11）。
+    //   * 没改过就等于"现在签退"，让服务端用自己的当前时间最可靠，
+    //     既不受浏览器回填影响，也不受本机与服务器时钟差影响。
+    //
+    // 用户改过的情况仍然完整支持（事后补签退）。
     let checkoutTime = null;
-    if (!away && customEl && customEl.value) {
+    if (!away && customEl && customEl.dataset.edited === '1' && customEl.value) {
         const nowValue = toLocalInputValue(new Date());
         customEl.max = nowValue;
-        // 只有"晚于现在"才纠正；用户主动填的更早时间必须保留
+        // 若用户填的时刻已超过"现在"，纠正为现在（服务端也会再做一次收敛兜底）
         if (customEl.value > nowValue) {
             customEl.value = nowValue;
         }
         checkoutTime = fromLocalInputValue(customEl.value);
     }
 
-    // 暂离不使用自定义时间（暂离不结算）；签退则把用户填的时间交给服务端。
+    // 暂离不使用自定义时间（暂离不结算）；签退仅在用户指定时才带上时间。
     const payload = { name: checkoutTargetName, away: away };
     if (checkoutTime) {
         payload.checkout_time = checkoutTime;

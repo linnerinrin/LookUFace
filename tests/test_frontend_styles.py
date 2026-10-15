@@ -226,12 +226,12 @@ def test_checkout_title_has_no_parentheses() -> None:
 
 
 def test_frontend_clamps_stale_checkout_time_on_submit() -> None:
-    """提交前必须把超过"现在"的签退时间纠正为现在。
+    """提交前必须处理已过期的签退时间。
 
     回归背景（实测）：弹窗打开时控件被填入"当时"的时间，过了约 9 分钟才点确认，
     该时间已成未来，提交被服务端拒绝：
         「当前约 03:36:59，你填的是 03:45:37」
-    前端必须在提交时刷新 max 并纠正过期值，服务端再收敛一次做兜底。
+    前端在提交时刷新 max 并纠正过期值，服务端再收敛一次做兜底。
     """
     manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
     handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
@@ -239,6 +239,56 @@ def test_frontend_clamps_stale_checkout_time_on_submit() -> None:
     assert "customEl.max = nowValue" in handler, "提交时未重新同步时间上限"
     assert "customEl.value > nowValue" in handler, (
         "提交时未纠正已过期的签退时间（会撞上服务端校验）"
+    )
+
+
+def test_datetime_input_disables_autocomplete() -> None:
+    """签退时间控件必须关闭自动填充。
+
+    **关键回归**：Chrome 的"表单值恢复"会把上一次的值回填进
+    ``datetime-local`` 控件，甚至覆盖脚本刚赋的默认值。
+    实测后果是"签退后账单全是 0"—— 控件里留着上一次会话的旧时刻，
+    用户直接点确认，服务端就按那个旧时刻结算（日志里计费秒数=3 / 11）。
+    """
+    html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    match = re.search(r"<input[^>]*id=\"checkoutCustomTime\"[^>]*>", html)
+    assert match, "未找到签退时间控件"
+    assert 'autocomplete="off"' in match.group(0), (
+        "签退时间控件缺少 autocomplete=off，浏览器会回填旧值"
+    )
+
+
+def test_default_checkout_time_is_not_sent_to_server() -> None:
+    """未手动改过签退时间时，**不应**把该字段传给服务端。
+
+    这样"现在签退"就完全由服务端用当前时间处理 ——
+    既不受浏览器回填旧值影响，也不受本机与服务器时钟差影响。
+    用户手动改过时仍要完整支持（事后补签退）。
+    """
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
+
+    assert "dataset.edited === '1'" in handler, (
+        "提交逻辑未检查「用户是否手动改过」，可能把浏览器回填的旧值发给服务端"
+    )
+    assert "if (checkoutTime)" in handler, "未对 checkout_time 做条件性发送"
+
+    # 打开弹窗时必须先清空再赋值（否则回填的旧值会被保留）
+    opener = manager_js[manager_js.find("function showCheckoutModal"):]
+    assert "customEl.value = '';" in opener, (
+        "打开弹窗时未先清空签退时间控件，Chrome 回填的旧值会残留"
+    )
+
+
+def test_editing_checkout_time_marks_it_as_user_set() -> None:
+    """用户改动签退时间（输入或选择）时必须标记为"用户已指定"。"""
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    opener = manager_js[manager_js.find("function showCheckoutModal"):]
+
+    assert "dataset.edited = '0'" in opener, "打开弹窗时未重置「用户已改」标记"
+    assert "dataset.edited = '1'" in opener, "输入变化时未标记「用户已改」"
+    assert "customEl.oninput" in opener and "customEl.onchange" in opener, (
+        "必须同时监听 input 与 change（不同交互方式触发的事件不同）"
     )
 
 

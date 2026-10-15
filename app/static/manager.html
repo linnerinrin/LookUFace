@@ -165,7 +165,11 @@
                             可自定义，默认现在
                         </span>
                     </label>
-                    <input type="datetime-local" id="checkoutCustomTime" class="auth-input" step="1">
+                    <!-- autocomplete=off：Chrome 会把上一次的值"恢复"进
+                         datetime-local 控件，覆盖掉脚本赋的新值，导致签退时间
+                         变成之前某个时刻（实测造成"签退后账单全是 0"）。 -->
+                    <input type="datetime-local" id="checkoutCustomTime" class="auth-input"
+                           step="1" autocomplete="off">
                     <p style="color: var(--text-secondary); font-size: 12px; margin-top: 6px;"
                        id="checkoutCustomHint">
                         用于事后补签退：填真实离开时间，服务端按它精确计算金额。

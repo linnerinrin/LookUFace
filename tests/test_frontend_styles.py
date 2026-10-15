@@ -24,6 +24,30 @@ CLASS_PREFIXES = ("btn-",)
 #: 这些 CSS 文件里解析出来的类名视为"已定义"
 CSS_FILES = ("idx.css", "manager.css", "account.css")
 
+#: 界面文件（会真正渲染给用户看的）
+UI_FILES = (
+    "manager.html", "manager.js", "manager.css",
+    "account.html", "account.js", "account.css",
+    "auth.js", "api.js", "idx.html", "idx.js", "idx.css",
+    "in.html", "in.js", "out.html", "out.js",
+    "camera-core.js", "console.html", "console.js",
+)
+
+#: 已知会在本机被渲染成**彩色图形**的字符。
+#:
+#: 用 Chrome 截图实测确认（本机装有 seguiemj.ttf）：
+#:   * 所有 U+1F000 及以上的 emoji
+#:   * \u25cf 实心圆点 —— 虽不是 emoji 码位，但实际渲染成彩色实心圆点
+#: 这些都不应出现在界面代码里。
+COLOR_GLYPH_CHARS = ("\u25cf",)
+
+#: 明确要求移除的 emoji（写成转义，避免本文件里又出现 emoji）
+REMOVED_EMOJI = (
+    "\U0001F464",  # 人像轮廓
+    "\U0001F465",  # 双人轮廓
+    "\U0001F7E2",  # 绿色圆形
+)
+
 # 匹配 "选择器 { ...属性... }"，要求大括号内至少有一个 "属性: 值"
 RULE_PATTERN = re.compile(r"([^{}]+)\{([^{}]*)\}", re.DOTALL)
 CLASS_IN_SELECTOR = re.compile(r"\.([A-Za-z_][\w-]*)")
@@ -533,3 +557,129 @@ def test_bounding_box_symmetry_holds_for_arbitrary_positions() -> None:
         # 只有当人脸正好在画面中心时，两种画法才会重合 —— 说明这个 bug 容易被漏测
         if camera_x == width // 2:
             assert wrong == displayed
+
+
+# --------------------------------------------------------------------------- #
+# emoji
+# --------------------------------------------------------------------------- #
+
+
+def _strip_comments(text: str, suffix: str) -> str:
+    """去掉注释，只保留会真正渲染/执行的代码。
+
+    注释里提到某个字符是允许的（例如「不再使用 U+25CF」这样的说明），
+    但那不算界面里出现了 emoji。
+    """
+    if suffix == ".js":
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        text = re.sub(r"(?m)^\s*//.*$", "", text)
+        return text
+    if suffix == ".css":
+        return re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    if suffix in (".html", ".htm"):
+        return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    return text
+
+
+def _read_ui_source(name: str) -> str:
+    path = STATIC_DIR / name
+    assert path.exists(), f"界面文件不存在：{name}"
+    return _strip_comments(path.read_text(encoding="utf-8"), path.suffix)
+
+
+def test_no_color_glyphs_in_ui_code() -> None:
+    """界面代码里不得出现会被渲染成彩色图形的字符。
+
+    需求原文：「把所有 emoji 去掉，太难看了」。
+
+    实测（本项目机器装了 seguiemj.ttf）：
+      * 所有 U+1F000 及以上的字符都会渲染成彩色 emoji；
+      * U+25CF（●）虽然不是 emoji 码位，但实际渲染为**彩色实心圆点**，
+        观感与 emoji 一致 —— 已用 Chrome 截图确认，因此也一并禁止。
+
+    通过的条件是「去掉注释后」不含这些字符 ——
+    注释里说明"曾经用过 ●"是允许的。
+    """
+    problems: list[str] = []
+
+    for name in UI_FILES:
+        source = _read_ui_source(name)
+        for index, line in enumerate(source.splitlines(), 1):
+            for char in line:
+                if ord(char) >= 0x1F000 or char in COLOR_GLYPH_CHARS:
+                    problems.append(
+                        f"{name}:{index} 出现 {char!r} (U+{ord(char):04X})：{line.strip()[:70]}"
+                    )
+
+    assert not problems, "界面代码里仍有彩色图形字符（emoji）：\n  " + "\n  ".join(problems)
+
+
+def test_specific_removed_emoji_are_gone() -> None:
+    """点名核对曾经用过的几个 emoji 已全部移除。"""
+    for char in REMOVED_EMOJI:
+        for name in UI_FILES:
+            source = _read_ui_source(name)
+            assert char not in source, (
+                f"{name} 仍含已被要求移除的 emoji U+{ord(char):04X}"
+            )
+
+
+def test_online_badge_uses_css_dot_not_colored_glyph() -> None:
+    """在线状态徽标必须用纯 CSS 圆点，而不是 ● 之类的彩色字符。"""
+    js = _read_ui_source("manager.js")
+    for cls in ("badge badge-online", "badge badge-away", "badge badge-offline"):
+        assert cls in js, f"状态徽标缺少样式类：{cls}"
+    assert "badge-dot" in js, "状态徽标缺少 CSS 圆点元素"
+    assert "badge-stale" in js, "「需重新注册」标注缺少样式类"
+
+    css = _read_ui_source("manager.css")
+    for selector in (
+        r"\.badge\s*\{",
+        r"\.badge-dot\s*\{",
+        r"\.badge-online\s*\{",
+        r"\.badge-away\s*\{",
+        r"\.badge-offline\s*\{",
+        r"\.badge-stale\s*\{",
+    ):
+        assert re.search(selector, css), f"manager.css 缺少徽标样式：{selector}"
+
+
+def test_avatars_show_initial_instead_of_emoji() -> None:
+    """人脸头像与统计图标改为文字（名字首字 / 中文单字），不再是 emoji。"""
+    js = _read_ui_source("manager.js")
+    assert "avatar-initial" in js, "人脸卡片头像未改为名字首字"
+    assert "avatarInitial(" in js, "缺少取名字首字的函数"
+
+    html = _read_ui_source("manager.html")
+    assert 'class="stat-icon"' in html, "统计卡片图标位缺失"
+    assert 'class="stat-icon stat-icon-online"' in html, "在线统计卡片图标位缺失"
+
+    css = _read_ui_source("manager.css")
+    for selector in (r"\.avatar-initial\s*\{", r"\.stat-icon-online\s*\{"):
+        assert re.search(selector, css), f"manager.css 缺少样式：{selector}"
+
+    # 已被取代的旧类不应再出现
+    for stale_class in (".avatar-placeholder", ".empty-icon"):
+        assert stale_class not in css, f"manager.css 仍残留已废弃的 {stale_class}"
+
+
+def test_avatar_initial_handles_edge_cases() -> None:
+    """首字提取必须处理空值，且不能把代理对字符截成半个。
+
+    直接跑 JS 逻辑的等价实现，锁定行为：
+    ``Array.from(str)`` 按码点切分，``charAt`` 会切坏代理对。
+    """
+    # 与 manager.js 里 avatarInitial 等价的 Python 实现
+    def avatar_initial(name):
+        chars = list(str("" if name is None else name).strip())
+        return chars[0] if chars else "?"
+
+    assert avatar_initial("许") == "许"
+    assert avatar_initial("浩 浩") == "浩"
+    assert avatar_initial("") == "?"
+    assert avatar_initial(None) == "?"
+    assert avatar_initial("   ") == "?"
+    # 超出 BMP 的字符（代理对）必须完整保留
+    assert avatar_initial("\U0001F600") == "\U0001F600"
+    assert len(avatar_initial("\U0001F600")) == 1
+

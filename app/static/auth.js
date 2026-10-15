@@ -76,7 +76,8 @@ function updateAuthUI() {
     if (user && user.id) {
         if (loginBtn) {
             const displayName = user.nickname || (user.email ? user.email.split('@')[0] : '用户');
-            loginBtn.innerHTML = `<span>👤</span> ${displayName}`;
+            // 去掉原先的 emoji，只显示名字
+            loginBtn.innerHTML = `<span>${escapeHtml(displayName)}</span>`;
         }
     } else {
         if (loginBtn) {

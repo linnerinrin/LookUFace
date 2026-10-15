@@ -321,6 +321,7 @@ h1 {
     box-shadow: var(--card-shadow);
 }
 
+/* 统计卡片里的图标位：原先放 emoji，现改为中文单字 */
 .stat-icon {
     width: 52px;
     height: 52px;
@@ -329,7 +330,16 @@ h1 {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 26px;
+    font-size: 22px;
+    font-weight: 600;
+    color: #4a90e2;
+    user-select: none;
+}
+
+/* 在线统计：绿色系（原先是内联 style 的绿色 emoji） */
+.stat-icon-online {
+    background: linear-gradient(135deg, rgba(76, 175, 80, 0.2) 0%, rgba(76, 175, 80, 0.1) 100%);
+    color: #43a047;
 }
 
 .stat-info {
@@ -417,8 +427,13 @@ h1 {
     flex-shrink: 0;
 }
 
-.avatar-placeholder {
-    font-size: 28px;
+/* 头像里显示的名字首字（原先是 emoji） */
+.avatar-initial {
+    font-size: 22px;
+    font-weight: 600;
+    color: #fff;
+    line-height: 1;
+    user-select: none;
 }
 
 .face-details {
@@ -567,13 +582,7 @@ h1 {
     color: var(--text-secondary);
 }
 
-.empty-state-large .empty-icon {
-    font-size: 72px;
-    margin-bottom: 16px;
-    opacity: 0.5;
-}
-
-.empty-state-large p {
+.empty-state-large .empty-state-large p {
     font-size: 16px;
     margin-bottom: 8px;
 }
@@ -910,4 +919,67 @@ body.dark #payModal .modal-content {
     border-radius: 12px;
     background: #fff;
     padding: 8px;
+}
+
+/* 深色主题：统计卡片单字提亮，保证对比度 */
+body.dark .stat-icon {
+    color: #7fb3e8;
+}
+
+body.dark .stat-icon-online {
+    color: #81c784;
+}
+
+/* ========== 状态徽标 ========== */
+/* 圆点用纯 CSS 画，不再使用 ●（U+25CF）——
+   该字符在本机由 seguiemj 字体提供，实际渲染为彩色实心圆点，
+   观感与 emoji 一致（已用 Chrome 截图确认）。 */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.badge-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.badge-online {
+    color: #4caf50;
+}
+
+.badge-away {
+    color: #ff9800;
+}
+
+.badge-offline {
+    color: #999;
+}
+
+.badge-stale {
+    color: #e53935;
+}
+
+/* 深色主题下提亮，保证对比度 */
+body.dark .badge-online {
+    color: #66bb6a;
+}
+
+body.dark .badge-away {
+    color: #ffb74d;
+}
+
+body.dark .badge-offline {
+    color: #8a94a3;
+}
+
+body.dark .badge-stale {
+    color: #ef5350;
 }

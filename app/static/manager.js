@@ -242,9 +242,9 @@ function renderFaces(faces) {
     document.getElementById('facesCount').innerText = `${sorted.length || 0} 条记录`;
 
     if (!sorted.length) {
+        // 空状态不再使用图标（原先是一个 emoji）
         grid.innerHTML = `
             <div class="empty-state-large">
-                <div class="empty-icon">👥</div>
                 <p>暂无注册人脸</p>
                 <p class="empty-hint">前往"实时识别"页面注册人脸</p>
             </div>
@@ -255,18 +255,22 @@ function renderFaces(faces) {
     let html = '';
     sorted.forEach((face, i) => {
         const registerTime = face.register_time ? new Date(face.register_time).toLocaleString() : '未知';
+        // 状态徽标：圆点用纯 CSS 画，不再使用 ●（U+25CF）。
+        // 虽然 ● 不是 emoji 码位，但在本机由 seguiemj 字体提供，
+        // 实际渲染出来就是彩色实心圆点（已用 Chrome 截图确认），
+        // 与用户要求去掉的 emoji 观感一致，因此一并替换。
         const onlineBadge = face.is_online
             ? (face.is_away
-                ? '<span style="color:#ff9800; font-weight:600;">● 暂离中</span>'
-                : '<span style="color:#4caf50; font-weight:600;">● 在线</span>')
-            : '<span style="color:#999;">● 离线</span>';
+                ? '<span class="badge badge-away"><i class="badge-dot"></i>暂离中</span>'
+                : '<span class="badge badge-online"><i class="badge-dot"></i>在线</span>')
+            : '<span class="badge badge-offline"><i class="badge-dot"></i>离线</span>';
         const checkinTime = face.checkin_time ? new Date(face.checkin_time).toLocaleString() : '未签到';
         const totalMinutes = face.online_time || 0;
         const durationStr = `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
 
         // 需要重新注册的特征（旧版 pickle 格式）给出显式提示
         const staleBadge = face.features_current === false
-            ? ' <span style="color:#e53935; font-weight:600;" title="旧版特征格式，需重新注册后才能被识别">● 需重新注册</span>'
+            ? ' <span class="badge badge-stale" title="旧版特征格式，需重新注册后才能被识别">需重新注册</span>'
             : '';
 
         const onlineBtn = face.is_online
@@ -283,7 +287,7 @@ function renderFaces(faces) {
             <div class="face-card-item" data-name="${escapeHtml(face.name)}">
                 <div style="font-weight:700; color:var(--text-secondary); min-width:30px;"># ${i + 1}</div>
                 <div class="face-avatar">
-                    <div class="avatar-placeholder">👤</div>
+                    <span class="avatar-initial">${escapeHtml(avatarInitial(face.name))}</span>
                 </div>
                 <div class="face-details">
                     <div class="face-name">${escapeHtml(face.name)} ${onlineBadge}${staleBadge}</div>
@@ -324,6 +328,18 @@ document.getElementById('facesGrid').addEventListener('click', function (event) 
 function escapeHtml(str) {
     // 统一使用 api.js 的实现，旧版漏掉了引号与单引号
     return LF.escapeHtml(str);
+}
+
+/**
+ * 头像里显示的首字。
+ *
+ * 原先头像里放的是一个 emoji，按需求去掉。改为显示人名首字 ——
+ * 用 Array.from 而不是 charAt，这样带代理对的字符（如某些生僻字）
+ * 不会被截成半个。
+ */
+function avatarInitial(name) {
+    const chars = Array.from(String(name == null ? '' : name).trim());
+    return chars.length ? chars[0] : '?';
 }
 
 //预览

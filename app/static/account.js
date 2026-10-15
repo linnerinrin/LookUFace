@@ -34,12 +34,21 @@ function updateAccountUI() {
         if (el) el.innerText = value;
     }
 
+    // 头像里显示名字首字（原先是一个 emoji）。
+    // 用 Array.from 而不是 charAt，避免把代理对字符截成半个。
+    function firstChar(name) {
+        const chars = Array.from(String(name == null ? '' : name).trim());
+        return chars.length ? chars[0] : '?';
+    }
+
     if (user && user.id) {
         if (notLoggedIn) notLoggedIn.style.display = 'none';
         if (loggedIn) loggedIn.style.display = 'block';
         if (statusDot) statusDot.className = 'status-dot connected';
         if (statusText) statusText.innerText = LF.auth.displayName();
-        if (loginBtn) loginBtn.innerHTML = `<span>👤</span> ${LF.auth.displayName()}`;
+        // 头像与按钮都去掉 emoji：按钮只显示名字，头像显示名字首字
+        if (loginBtn) loginBtn.innerHTML = `<span>${LF.escapeHtml(LF.auth.displayName())}</span>`;
+        setText('profileAvatar', firstChar(LF.auth.displayName()));
 
         setText('profileName', LF.auth.displayName());
         setText('profileEmail', user.email || '');

@@ -78,8 +78,8 @@ function updateUIAfterLoginChange() {
                 <button id="loginPromptBtn" class="btn btn-primary" style="margin-top: 16px;">立即登录</button>
             </div>
         `;
-        document.getElementById('totalCount').innerText = '0';
-        document.getElementById('facesCount').innerText = '0 条记录';
+        // 统计卡片已按需求整块删除，这里只需更新列表标题旁的条数
+        setTextIfPresent('facesCount', '0 条记录');
         const loginBtn = document.getElementById('loginPromptBtn');
         if (loginBtn) {
             loginBtn.onclick = () => {
@@ -218,9 +218,8 @@ async function loadFaces() {
     try {
         const data = await LF.api.get('/faces');
         facesData = data.faces || [];
-        const onlineCount = facesData.filter(f => f.is_online).length;
-        const onlineEl = document.getElementById('onlineCount');
-        if (onlineEl) onlineEl.innerText = onlineCount;
+        // 说明：原先这里还会算出在线人数写给 #onlineCount，
+        // 但那个统计卡片已按需求整块删除，因此不再做这份无用计算。
         renderFaces(facesData);
     } catch (err) {
         if (err.status === 401) {
@@ -238,8 +237,8 @@ function renderFaces(faces) {
     const grid = document.getElementById('facesGrid');
     const sorted = sortFaces(faces, currentSort);
 
-    document.getElementById('totalCount').innerText = sorted.length || 0;
-    document.getElementById('facesCount').innerText = `${sorted.length || 0} 条记录`;
+    // 只更新「人脸列表」标题旁的条数（统计卡片已按需求删除）
+    setTextIfPresent('facesCount', `${sorted.length || 0} 条记录`);
 
     if (!sorted.length) {
         // 空状态不再使用图标（原先是一个 emoji）
@@ -283,12 +282,13 @@ function renderFaces(faces) {
 
         // 注意：名字只进 data-name 属性（经 escapeHtml 处理），绝不拼进 onclick。
         // 旧版把名字插进 onclick="f('...')" 且只做了 \' 转义，可被注入。
+        //
+        // 头像位置按需求置空：原先那个紫色圆形头像（内含名字首字）已删除，
+        // 只留一个空白占位维持卡片内各行的对齐间距。
         html += `
             <div class="face-card-item" data-name="${escapeHtml(face.name)}">
                 <div style="font-weight:700; color:var(--text-secondary); min-width:30px;"># ${i + 1}</div>
-                <div class="face-avatar">
-                    <span class="avatar-initial">${escapeHtml(avatarInitial(face.name))}</span>
-                </div>
+                <div class="face-avatar-blank"></div>
                 <div class="face-details">
                     <div class="face-name">${escapeHtml(face.name)} ${onlineBadge}${staleBadge}</div>
                     <div class="face-time">签到: ${escapeHtml(checkinTime)} | 注册: ${escapeHtml(registerTime)} | 总在线: ${durationStr}</div>
@@ -331,15 +331,16 @@ function escapeHtml(str) {
 }
 
 /**
- * 头像里显示的首字。
+ * 安全地给元素设置文字。
  *
- * 原先头像里放的是一个 emoji，按需求去掉。改为显示人名首字 ——
- * 用 Array.from 而不是 charAt，这样带代理对的字符（如某些生僻字）
- * 不会被截成半个。
+ * 用于那些"元素可能已不存在"的情况 —— 例如统计卡片按需求删除后，
+ * ``totalCount`` / ``onlineCount`` 就不在 DOM 里了。
+ * 直接 ``getElementById(...).innerText = ...`` 会因 null 抛错，
+ * 且这个错会中断后面的渲染逻辑。
  */
-function avatarInitial(name) {
-    const chars = Array.from(String(name == null ? '' : name).trim());
-    return chars.length ? chars[0] : '?';
+function setTextIfPresent(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.innerText = value;
 }
 
 //预览

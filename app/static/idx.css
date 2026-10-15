@@ -147,40 +147,6 @@ h1 {
     min-height: 100vh;
 }
 
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 40px;
-    padding: 0 12px;
-    cursor: pointer;
-    transition: opacity 0.2s ease;
-}
-
-.logo:hover {
-    opacity: 0.8;
-}
-
-.logo-icon {
-    width: 40px;
-    height: 40px;
-    background: linear-gradient(135deg, #4a90e2 0%, #f06292 100%);
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-}
-
-.logo-text {
-    font-size: 20px;
-    font-weight: 700;
-    background: linear-gradient(135deg, #4a90e2 0%, #f06292 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
 /* 导航菜单 */
 .nav-menu {
     flex: 1;

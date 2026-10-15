@@ -137,6 +137,30 @@
         }
     };
 
+    /**
+     * 计算一个 bbox 在**画布坐标系**中的矩形。
+     *
+     * 坐标系说明（这里曾经算错，导致识别框和人脸左右镜像）：
+     *
+     *   1. ``<video>`` 在 CSS 里被 ``transform: scaleX(-1)`` 镜像显示，
+     *      所以用户看到的画面是「摄像头原始画面的水平翻转」。
+     *   2. ``captureAndSend`` 发送前也把帧做了水平翻转，
+     *      因此**服务端看到的就是用户看到的画面**。
+     *   3. 于是服务端返回的 bbox 已经是显示空间的坐标，
+     *      直接按原值画到覆盖层上即可 —— 不能再翻一次。
+     *
+     * 之前的实现又做了一次 ``videoWidth - x2``，等于翻了两次，
+     * 结果框的位置与人脸左右相反。
+     */
+    CameraApp.prototype.computeBoxRect = function (bbox) {
+        return {
+            x: bbox[0],
+            y: bbox[1],
+            width: bbox[2] - bbox[0],
+            height: bbox[3] - bbox[1]
+        };
+    };
+
     CameraApp.prototype.drawFaces = function (faces) {
         if (!this.overlayCtx || !this.overlay) return;
 
@@ -144,32 +168,31 @@
         ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
         if (!faces || !faces.length) return;
 
-        // 视频是镜像显示的，框也要镜像
-        var videoWidth = this.overlay.width;
-
         for (var i = 0; i < faces.length; i++) {
             var face = faces[i];
             var bbox = face.bbox || [];
             if (bbox.length < 4) continue;
 
-            var x1 = bbox[0], y1 = bbox[1], x2 = bbox[2], y2 = bbox[3];
-            var mirroredX1 = videoWidth - x2;
-            var width = x2 - x1;
-            var height = y2 - y1;
+            // 已是显示空间坐标，直接使用
+            var rect = this.computeBoxRect(bbox);
             var isKnown = face.identity && face.identity !== 'Unknown';
             var color = isKnown ? '#4caf50' : '#ff5722';
             var label = isKnown ? face.identity : '陌生人';
 
             ctx.strokeStyle = color;
             ctx.lineWidth = 3;
-            ctx.strokeRect(mirroredX1, y1, width, height);
+            ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
 
             ctx.font = 'bold 14px Arial, sans-serif';
             var textWidth = ctx.measureText(label).width;
+            // 标签默认画在框上方；贴近画面顶部时改画到框内，避免被裁掉
+            var labelY = rect.y - 22;
+            if (labelY < 0) labelY = rect.y + 2;
+
             ctx.fillStyle = color;
-            ctx.fillRect(mirroredX1, Math.max(0, y1 - 22), textWidth + 10, 22);
+            ctx.fillRect(rect.x, labelY, textWidth + 10, 22);
             ctx.fillStyle = '#000';
-            ctx.fillText(label, mirroredX1 + 5, Math.max(12, y1 - 6));
+            ctx.fillText(label, rect.x + 5, labelY + 16);
         }
     };
 
@@ -451,7 +474,19 @@
         var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        canvas.getContext('2d').drawImage(this.video, 0, 0, width, height);
+        var ctx = canvas.getContext('2d');
+
+        // 与 captureAndSend 保持一致：先水平镜像再取帧。
+        //
+        // 原因：识别链路上发送给服务端的帧是镜像过的，而 <video> 也是镜像显示的，
+        // 所以只要「发送/截取的画面」与「用户所见」方向一致，识别结果与参考截图
+        // 才都是用户视角。此前这里截的是未镜像的原始帧，
+        // 导致存下来的注册截图与界面里看到的方向左右相反。
+        ctx.save();
+        ctx.translate(width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(this.video, 0, 0, width, height);
+        ctx.restore();
 
         canvas.toBlob(function (blob) {
             if (!blob) { LF.toast('截帧失败，请重试', true); return; }

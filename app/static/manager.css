@@ -269,6 +269,33 @@ h1 {
     background: var(--nav-hover);
 }
 
+/* 主操作按钮。
+   此前 manager.css 只定义了 .btn 与 .btn-outline，没有 .btn-primary，
+   导致账单弹窗里的「打开支付链接」按钮没有任何配色（只剩 .btn 的基础形状）。
+   这里补上与主题一致的蓝色。 */
+.btn-primary {
+    background: #4a90e2;
+    color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #3a7bc8;
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-danger {
+    background: #f44336;
+    color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #d32f2f;
+}
+
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -829,4 +856,94 @@ body.dark #checkoutModal .modal-content {
 .btn-modify:hover {
     background: #f57c00;
     transform: translateY(-1px);
+}
+
+/* ========== 账单按钮 ========== */
+/* 与同一行其他按钮（预览/修改/签到/签退/删除）保持完全一致的尺寸与过渡，
+   只换颜色以便一眼区分。此前该类名在 CSS 中不存在，按钮完全没有样式。 */
+.btn-billing {
+    background: #7e57c2;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-billing:hover {
+    background: #673ab7;
+    transform: translateY(-1px);
+}
+
+.btn-billing:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ========== 账单弹窗 ========== */
+/* 与其他弹窗（签到确认 / 签退）共用同一套外观；
+   max-width 由各自 HTML 上的内联样式指定（460px）。 */
+#billingModal .modal-content {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+}
+
+body.dark #billingModal .modal-content {
+    background: rgba(30, 30, 50, 0.95);
+}
+
+/* 账单弹窗里的表单控件要与 #checkoutModal 完全一致 */
+#billingModal .form-group {
+    margin-bottom: 16px;
+}
+
+#billingModal .form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+#billingModal .auth-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--input-border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+/* 只读金额/时长输入框：弱化显示，避免看起来像可编辑 */
+#billingModal .auth-input:disabled {
+    opacity: 1;
+    color: var(--text-primary);
+    cursor: default;
+}
+
+#billingModal .modal-body {
+    padding-top: 4px;
+}
+
+/* 账单弹窗底部按钮：与签退弹窗的操作区一致 */
+#billingModal .modal-body > div:last-child {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 16px;
+}
+
+/* 二维码图片：统一圆角与白底，避免深色主题下看不清 */
+#billingModal #billingQrcode {
+    display: block;
+    margin: 0 auto;
+    border-radius: 12px;
+    background: #fff;
+    padding: 8px;
 }

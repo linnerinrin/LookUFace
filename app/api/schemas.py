@@ -212,8 +212,13 @@ class SessionStatusResponse(BaseModel):
     preview_minutes: int = 0
     online_time: int = 0
     away_timeout_minutes: int = 0
+    #: 服务端当前时刻。前端用它设置「签退时间」的上限 ——
+    #: 不依赖浏览器本地时钟（两者可能有偏差，会误判"未来时间"）。
+    server_now: datetime | None = None
     #: 计费算式明细，便于排查「为什么是 0 分钟」
     elapsed_minutes: int = 0
+    #: 签到至今精确经过的秒数（不扣暂离）
+    elapsed_seconds: int = 0
     away_minutes: int = 0
     rate_per_minute: float = 0.0
     amount: float = 0.0
@@ -244,7 +249,14 @@ class CheckOutResponse(BaseModel):
     settled: bool = False
     #: 计费算式明细，便于排查「为什么是 0 分钟」
     checkin_time: datetime | None = None
+    #: 计算实际使用的结算时刻。用户可能自定义签退时间，服务端也可能把
+    #: 未来时刻收敛为当前时刻，因此必须回传真实使用的值 —— 前端据此把
+    #: 「签到 -> 签退 -> 计费」的时间账原样展示，用户可自行核对。
+    checkout_time: datetime | None = None
     elapsed_minutes: int = 0
+    #: 签到到签退**精确经过的秒数**（不扣暂离）。
+    #: 用来解释「不足 1 分钟为何是 0」—— 例如实际只过了 7 秒。
+    elapsed_seconds: int = 0
     away_minutes: int = 0
     rate_per_minute: float = 0.0
 

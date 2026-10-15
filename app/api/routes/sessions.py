@@ -88,7 +88,10 @@ async def check_out(
         is_away_action=request.away,
         settled=result.settled,
         checkin_time=result.checkin_at,
+        # 真实结算时刻（可能来自用户自定义，或被服务端收敛）
+        checkout_time=result.settled_at,
         elapsed_minutes=detail.elapsed_minutes if detail else 0,
+        elapsed_seconds=detail.elapsed_seconds if detail else 0,
         away_minutes=detail.away_minutes if detail else 0,
         rate_per_minute=settings.BILLING_RATE_PER_MINUTE,
     )
@@ -116,9 +119,13 @@ async def session_status(
         online_time=int(state.accumulated_minutes or 0),
         away_timeout_minutes=settings.AWAY_TIMEOUT_MINUTES,
         elapsed_minutes=detail.elapsed_minutes,
+        elapsed_seconds=detail.elapsed_seconds,
         away_minutes=detail.away_minutes,
         rate_per_minute=settings.BILLING_RATE_PER_MINUTE,
         amount=amount,
+        # 服务端当前时刻：前端据此设置签退时间的上限，
+        # 避免依赖浏览器本地时钟（两者可能有偏差）。
+        server_now=datetime.now(),
     )
 
 

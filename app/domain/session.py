@@ -157,6 +157,10 @@ class Breakdown:
 
     #: 从签到到现在经过的分钟数（未扣暂离）
     elapsed_minutes: int
+    #: 从签到到现在**精确经过的秒数**（不扣暂离）。
+    #: 用于把「签到 7 秒后就签退」与「时间基准算错了」区分开 ——
+    #: 只显示"不足 1 分钟"时用户无法判断到底是哪一种。
+    elapsed_seconds: int
     #: 其中被暂离扣掉的分钟数
     away_minutes: int
     #: 实际计费的分钟数（向下取整）
@@ -194,6 +198,7 @@ def breakdown(
 
     return Breakdown(
         elapsed_minutes=int(elapsed_seconds // 60),
+        elapsed_seconds=int(elapsed_seconds),
         away_minutes=int(max(0.0, away_seconds) // 60),
         billable_minutes=int(billable // 60),
         capped=capped,

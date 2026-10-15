@@ -157,7 +157,8 @@
                            step="1" autocomplete="off">
                     <p style="color: var(--text-secondary); font-size: 12px; margin-top: 6px;"
                        id="checkoutCustomHint">
-                        用于事后补签退：填真实离开时间，服务端按它精确计算金额。
+                        只能填 <strong>当前时刻或更早</strong>：计费只结算已经过去的时间。
+                        事后补签退时，填真实离开的时间即可。
                     </p>
                 </div>
 
@@ -203,6 +204,17 @@
                     <label>姓名</label>
                     <input type="text" id="payName" class="auth-input" disabled>
                 </div>
+
+                <!-- 明确列出签到/签退时刻，让"为什么是 0"可以自己核对 -->
+                <div class="form-group">
+                    <label>签到时间</label>
+                    <input type="text" id="payCheckinAt" class="auth-input" disabled>
+                </div>
+                <div class="form-group">
+                    <label>签退时间</label>
+                    <input type="text" id="payCheckoutAt" class="auth-input" disabled>
+                </div>
+
                 <div class="form-group">
                     <label>在场时间</label>
                     <input type="text" id="payElapsed" class="auth-input" disabled>

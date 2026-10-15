@@ -518,11 +518,14 @@ def test_minute_precision_truncates_seconds_honestly(client, face, db_session) -
     assert body["elapsed_minutes"] in (44, 45)
 
 
-def test_checkout_clamps_future_time_over_http(client, face) -> None:
-    """签退时间晚于当前时刻时应收敛为当前时刻，而不是返回 400。
+def test_checkout_rejects_future_time_over_http(client, face) -> None:
+    """明显晚于当前时刻的签退时间必须返回 400，且会话保持在线。
 
-    实测常见场景：弹窗打开时控件被填入"当时"的时间，隔了约 9 分钟才点确认，
-    该时间点已变成未来。用户的意图是"现在签退"，收敛处理才不会让人困惑。
+    **这是实测的「账单突然变成全 0」元凶**：用户以为"选择数分钟以后"
+    表示"结算到那个时刻"，但计费只能结算已经过去的时间。
+    旧实现把未来时刻静默夹回"现在"，返回 0 元且毫无提示。
+
+    现在必须明确报错，并把原因写进 detail，让界面能直接展示给用户。
     """
     from datetime import datetime, timedelta
 
@@ -533,15 +536,36 @@ def test_checkout_clamps_future_time_over_http(client, face) -> None:
         "/api/v1/sessions/checkout",
         json={"name": face.name, "away": False, "checkout_time": _local_stamp(future)},
     )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["settled"] is True, "应照常结算"
-    # 收敛到当前时刻：刚签到就签退 -> 0 分钟，而不是把未来 1 小时算进去
-    assert body["session_minutes"] == 0
-    assert body["elapsed_minutes"] == 0
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "不能晚于当前时刻" in detail
+    assert "只结算已经过去的时间" in detail, f"错误信息应说明原因：{detail}"
 
     status = client.post("/api/v1/sessions/status", json={"name": face.name}).json()
-    assert status["is_online"] is False, "应当已正常签退"
+    assert status["is_online"] is True, "校验失败不得关闭会话"
+
+
+def test_checkout_tolerates_clock_skew_over_http(client, face) -> None:
+    """仅几秒的"未来"按钟差处理：收敛为当前时刻，不报错。
+
+    管理员机器比服务器快几秒很常见，不该因此让人签不了退。
+    """
+    from datetime import datetime, timedelta
+
+    client.post("/api/v1/sessions/checkin", json={"name": face.name})
+    slight = datetime.now() + timedelta(seconds=20)
+
+    response = client.post(
+        "/api/v1/sessions/checkout",
+        json={"name": face.name, "away": False, "checkout_time": _local_stamp(slight)},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["settled"] is True
+    # 收敛到当前时刻：刚签到就签退 -> 0 分钟
+    assert body["session_minutes"] == 0
+    assert body["elapsed_minutes"] == 0
+    assert body["checkout_time"] is not None, "应回传真实结算时刻"
 
 
 def test_checkout_rejects_time_before_checkin_over_http(client, face) -> None:

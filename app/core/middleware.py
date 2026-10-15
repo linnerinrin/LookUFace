@@ -50,6 +50,29 @@ def _safe_target(request: Request) -> str:
     return urlunsplit(("", "", url.path, _sanitize_query(url.query), ""))
 
 
+def _request_origin(request: Request) -> str | None:
+    """从请求头推导「浏览器实际使用的 Origin」。
+
+    浏览器访问 ``http://192.168.2.102:8000/...`` 时，``Host`` 头就是
+    ``192.168.2.102:8000``，据此可以判断用户到底用的是哪个地址。
+    """
+    host = request.headers.get("host")
+    if not host:
+        return None
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+    return f"{scheme}://{host}"
+
+
+def _is_same_origin(request: Request, origin: str) -> bool:
+    """``Origin`` 是否与浏览器实际访问的地址同源。
+
+    同源请求浏览器**不会**做 CORS 检查，即使该地址不在 ``ALLOWED_ORIGINS`` 里也能正常工作。
+    因此这种「用户用局域网地址/机器名访问页面」的情况不应报警。
+    """
+    actual = _request_origin(request)
+    return bool(actual) and actual.lower() == origin.lower()
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """分配 request_id、记录访问日志、追加安全响应头。"""
 
@@ -84,6 +107,28 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         if self._add_security_headers:
             for key, value in _SECURITY_HEADERS.items():
                 response.headers.setdefault(key, value)
+
+        # 跨源被拒的显式告警。
+        #
+        # 浏览器对这个响应会直接报 "Failed to fetch"，用户看不到 400 的原因；
+        # 而服务端如果只按普通 4xx 记一行，也很难看出是「访问地址不在白名单」。
+        # 这里把结论直接写进日志，并把允许的地址一并列出，便于一次性定位。
+        origin = request.headers.get("origin")
+        if (
+            origin
+            and origin != "null"
+            and origin not in settings.allowed_origins_list
+            and not _is_same_origin(request, origin)
+        ):
+            logger.warning(
+                "跨源请求被拒绝：Origin=%s 不在 ALLOWED_ORIGINS 中。"
+                "浏览器会显示 Failed to fetch。"
+                "请用 %s 访问，或把该 Origin 加入 .env 的 ALLOWED_ORIGINS。"
+                "当前白名单=%s",
+                origin,
+                settings.allowed_origins_list[0] if settings.allowed_origins_list else "(空)",
+                settings.allowed_origins_list,
+            )
 
         if request.url.path not in _QUIET_PATHS:
             log = logger.warning if response.status_code >= 400 else logger.info

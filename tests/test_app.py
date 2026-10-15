@@ -39,12 +39,12 @@ def test_cors_headers_for_allowed_origin(anon_client) -> None:
     response = anon_client.options(
         "/api/v1/health",
         headers={
-            "Origin": "http://127.0.0.1:8000",
+            "Origin": "http://127.0.0.1:8835",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code in (200, 204)
-    assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:8000"
+    assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:8835"
 
 
 def test_internal_error_handler_registered(anon_client) -> None:
@@ -122,7 +122,7 @@ def test_cors_preflight_allows_whitelisted_origin_with_requested_with(anon_clien
     response = anon_client.options(
         "/api/v1/health",
         headers={
-            "Origin": "http://127.0.0.1:8000",
+            "Origin": "http://127.0.0.1:8835",
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "x-requested-with",
         },
@@ -130,7 +130,7 @@ def test_cors_preflight_allows_whitelisted_origin_with_requested_with(anon_clien
     assert response.status_code == 200
     allow_headers = response.headers.get("access-control-allow-headers", "").lower()
     assert "x-requested-with" in allow_headers
-    assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:8000"
+    assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:8835"
 
 
 def test_cors_preflight_rejects_unlisted_origin(anon_client) -> None:
@@ -142,7 +142,7 @@ def test_cors_preflight_rejects_unlisted_origin(anon_client) -> None:
     response = anon_client.options(
         "/api/v1/health",
         headers={
-            "Origin": "http://192.168.2.102:8000",
+            "Origin": "http://192.168.2.102:8835",
             "Access-Control-Request-Method": "GET",
         },
     )
@@ -196,19 +196,19 @@ def test_rejected_origin_is_logged_with_actionable_message(anon_client) -> None:
         anon_client.post(
             "/api/v1/auth/login",
             json={"email": "a@b.c", "password": "x"},
-            headers={"Origin": "http://192.168.2.102:8000"},
+            headers={"Origin": "http://192.168.2.102:8835"},
         )
 
     joined = "\n".join(messages)
     assert "跨源请求被拒绝" in joined, f"缺少跨源告警，实际日志：\n{joined}"
-    assert "192.168.2.102:8000" in joined
+    assert "192.168.2.102:8835" in joined
     assert "ALLOWED_ORIGINS" in joined
 
 
 def test_same_origin_request_is_not_flagged_as_cross_origin(anon_client) -> None:
     """同源请求不应告警，即使该地址不在 ALLOWED_ORIGINS 里。
 
-    浏览器访问 http://192.168.2.102:8000 时，页面对同源 API 的请求
+    浏览器访问 http://192.168.2.102:8835 时，页面对同源 API 的请求
     不会触发 CORS 检查，因此不应产生噪声告警。
     """
     with _capture_app_logs() as messages:
@@ -219,3 +219,39 @@ def test_same_origin_request_is_not_flagged_as_cross_origin(anon_client) -> None
 
     joined = "\n".join(messages)
     assert "跨源请求被拒绝" not in joined, f"同源请求被误报：\n{joined}"
+
+
+def test_allowed_origins_cover_configured_port() -> None:
+    """``ALLOWED_ORIGINS`` 必须包含当前 ``PORT`` 对应的本机地址。
+
+    这是**实际踩过的坑**：把 PORT 从 8000 改成 8835 却忘了改 ALLOWED_ORIGINS 时，
+    页面能正常打开，但页面对同源 API 的请求会被中间件按跨源拒绝，
+    浏览器里表现为**所有接口都报 "Failed to fetch"**，
+    而服务端日志只会记一条「跨源请求被拒绝」，很容易误判成后端故障。
+
+    因此把「端口与允许来源必须一致」固化成测试：
+    ``settings.PORT`` 变更后若忘记同步 ``ALLOWED_ORIGINS``，这里会立刻失败。
+    """
+    from urllib.parse import urlparse
+
+    from app.config import settings
+
+    port = settings.PORT
+    origins = [item.strip() for item in settings.ALLOWED_ORIGINS.split(",") if item.strip()]
+
+    # 允许列表里必须有指向本机、且端口等于 PORT 的来源
+    local_ports: list[int | None] = []
+    for origin in origins:
+        parsed = urlparse(origin)
+        if parsed.hostname in ("127.0.0.1", "localhost"):
+            local_ports.append(parsed.port)
+
+    assert local_ports, (
+        f"ALLOWED_ORIGINS 里没有本机地址：{settings.ALLOWED_ORIGINS!r}"
+    )
+    assert port in local_ports, (
+        f"PORT={port}，但 ALLOWED_ORIGINS 里本机地址的端口是 {local_ports}。\n"
+        f"两者不一致时，用 http://127.0.0.1:{port} 打开页面后所有 API 都会报 "
+        f"Failed to fetch。请在 .env 里把 ALLOWED_ORIGINS 改成包含 "
+        f"http://127.0.0.1:{port} 与 http://localhost:{port}。"
+    )

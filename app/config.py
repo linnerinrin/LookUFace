@@ -48,11 +48,14 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.1.0"
     DEBUG: bool = False
     HOST: str = "127.0.0.1"
-    PORT: int = 8000
+    PORT: int = 8835
     LOG_LEVEL: str = "INFO"
 
-    # CORS：默认仅本机，避免旧版默认 "*" + credentials 的不安全组合
-    ALLOWED_ORIGINS: str = "http://127.0.0.1:8000,http://localhost:8000"
+    # CORS：默认仅本机，避免旧版默认 "*" + credentials 的不安全组合。
+    # 注意：这里必须与 PORT 保持一致 —— 用 http://127.0.0.1:8835 打开页面时，
+    # 页面对同源 API 的请求会带 Origin 头；若允许列表里没有该端口，
+    # 中间件会按跨源拒绝，浏览器表现为 "Failed to fetch"。
+    ALLOWED_ORIGINS: str = "http://127.0.0.1:8835,http://localhost:8835"
 
     # ---------------- 路径 ----------------
     BASE_DIR: Path = BASE_DIR

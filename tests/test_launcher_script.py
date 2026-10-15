@@ -124,7 +124,43 @@ def test_start_bat_does_not_kill_processes() -> None:
     script = (PROJECT_ROOT / "start.bat").read_text(encoding="utf-8", errors="replace")
     lowered = script.lower()
     assert "taskkill" not in lowered, "start.bat 不应自动杀进程"
-    assert "port 8000 is already in use" in lowered, "应改为提示端口占用"
+    assert "already in use" in lowered, "应改为提示端口占用"
+
+
+def test_start_bat_reads_port_from_env() -> None:
+    """端口必须从 .env 读取，不能在脚本里硬编码。
+
+    **真实问题**：脚本原先把 8000 写死在三处（netstat 检查、错误提示、打印的访问地址）。
+    用户把 ``PORT`` 改成 8835 后，脚本仍然去检查 8000 并报
+    「Port 8000 is already in use」，同时打印的访问地址也是错的 ——
+    参数与提示不一致，非常误导。
+
+    现在改为 ``for /f`` 从 ``.env`` 解析 ``PORT``，并明确打印解析结果。
+    """
+    script = (PROJECT_ROOT / "start.bat").read_text(encoding="utf-8", errors="replace")
+
+    # 必须从 .env 解析
+    assert ".env" in script, "未从 .env 读取配置"
+    assert re.search(r'if /i "%%a"=="PORT"', script), "未解析 .env 里的 PORT"
+    assert '%PORT%' in script, "端口未用变量引用"
+
+    # 端口检查与打印地址都必须使用变量，而不是字面量端口
+    assert re.search(r'findstr\s+":%PORT%\s*"', script), "netstat 检查未使用 %PORT%"
+    assert re.search(r'already in use by PID', script)
+    assert re.search(r'http://localhost:%PORT%', script), "打印的访问地址未使用 %PORT%"
+
+    # 不允许再出现 "检查/报告 8000" 这类硬编码端口的行为（注释里说明历史原因不算）
+    code_lines = [
+        line for line in script.splitlines()
+        if not line.strip().upper().startswith("REM")
+    ]
+    body = "\n".join(code_lines)
+    assert not re.search(r'findstr\s+":\d+\s*"', body), (
+        "端口检查里仍存在硬编码端口字面量"
+    )
+    assert not re.search(r'http://localhost:\d+', body), (
+        "访问地址仍硬编码了端口字面量"
+    )
 
 
 def test_start_bat_surfaces_exit_code() -> None:

@@ -49,7 +49,7 @@ function loadApi({ fetchImpl } = {}) {
       (listeners.get(event.type) || []).forEach((fn) => fn(event));
       return true;
     },
-    location: { protocol: 'http:', host: 'localhost:8000', pathname: '/static/idx.html' },
+    location: { protocol: 'http:', host: 'localhost:8835', pathname: '/static/idx.html' },
     setTimeout,
     clearTimeout,
     StorageEvent: class StorageEvent {

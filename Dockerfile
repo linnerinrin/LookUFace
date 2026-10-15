@@ -62,6 +62,8 @@ RUN groupadd --system --gid 1001 lookuface \
 
 USER lookuface
 
+# 容器内端口固定为 8000（下面的 CMD 显式传入，不依赖 .env）。
+# 对外暴露的宿主机端口由 docker-compose.yml 的 ports 决定（当前 8835:8000）。
 EXPOSE 8000
 
 VOLUME ["/app/storage", "/app/logs", "/app/models"]

@@ -21,7 +21,11 @@ services:
     restart: unless-stopped
 
     ports:
-      - "8000:8000"
+      # 宿主机端口 : 容器内端口。
+      # 容器内保持 8000（Dockerfile 的 EXPOSE 与健康检查都按 8000 写），
+      # 对外暴露到 8835，与本机直跑时的 .env PORT 保持一致，
+      # 这样浏览器里记的地址在两种运行方式下都一样。
+      - "8835:8000"
 
     env_file:
       - .env
@@ -31,6 +35,8 @@ services:
       LOG_DIR: "/app/logs"
       STORAGE_DIR: "/app/storage"
       HOST: "0.0.0.0"
+      # 容器内端口固定 8000（与 ports/EXPOSE/健康检查一致）；
+      # 注意 .env 里若写了 ALLOWED_ORIGINS，需包含对外访问的 8835。
       PORT: "8000"
       DEBUG: "False"
 

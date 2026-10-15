@@ -44,10 +44,26 @@ let countdownInterval = null; //验证码计时器
 // 以及 api.js 里注册的 window error / unhandledrejection 全局兜底。
 
 //初始化
+var __authInitialized = false;
 function initAuth() {
-    console.log('初始化认证模块');
-    updateAuthUI();
-    bindAuthEvents();
+    // 幂等：DOMContentLoaded 与"脚本加载时 DOM 已就绪"两条路径都调用它
+    if (__authInitialized) return;
+    __authInitialized = true;
+
+    // 两步分别兜错：任何一步抛异常都不应阻止另一步。
+    // 回归背景：updateAuthUI() 曾因 ReferenceError 抛错，
+    // 而它排在 bindAuthEvents() 之前，导致**点击事件从未被绑定**，
+    // 表现为导航栏按钮点不动、文案也不更新。
+    try {
+        updateAuthUI();
+    } catch (err) {
+        if (window.console && console.error) console.error('updateAuthUI 失败:', err);
+    }
+    try {
+        bindAuthEvents();
+    } catch (err) {
+        if (window.console && console.error) console.error('bindAuthEvents 失败:', err);
+    }
 }
 
 //绑按钮
@@ -68,6 +84,25 @@ function bindAuthEvents() {
     }
 }
 
+/**
+ * HTML 转义。
+ *
+ * **为什么 auth.js 需要自己定义一份**：
+ * ``escapeHtml`` 在 api.js 里是 IIFE 闭包内的局部函数，只通过
+ * ``window.LookUFace.escapeHtml`` 暴露，**并不存在同名全局函数**。
+ * 所以这里不能直接调用裸的 ``escapeHtml(...)``——
+ * 而且 idx.html 目前的脚本顺序是 ``api.js → idx.js → auth.js``，
+ * 连 ``window.LookUFace`` 都可能还没就绪。
+ *
+ * 因此本文件自带一份实现，保证**不依赖脚本加载顺序**。
+ * （曾经用过 ``LF.escapeHtml``，在 idx.html 上同样会炸。）
+ */
+function authEscapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+    });
+}
+
 //更新
 function updateAuthUI() {
     const loginBtn = document.getElementById('loginBtn');
@@ -77,7 +112,7 @@ function updateAuthUI() {
         if (loginBtn) {
             const displayName = user.nickname || (user.email ? user.email.split('@')[0] : '用户');
             // 去掉原先的 emoji，只显示名字
-            loginBtn.innerHTML = `<span>${escapeHtml(displayName)}</span>`;
+            loginBtn.innerHTML = `<span>${authEscapeHtml(displayName)}</span>`;
         }
     } else {
         if (loginBtn) {
@@ -489,6 +524,12 @@ function getCurrentUser() {
 
 
 // 页面加载时初始化
-document.addEventListener('DOMContentLoaded', function() {
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () {
+        initAuth();
+    });
+} else {
+    // 脚本在 DOM 就绪之后才执行（延迟加载 / 缓存脚本等）时，
+    // DOMContentLoaded 已经错过，必须立即初始化，否则按钮既不更新也点不动。
     initAuth();
-});
+}

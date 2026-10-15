@@ -41,13 +41,22 @@ function updateAccountUI() {
         return chars.length ? chars[0] : '?';
     }
 
+    // 本文件自带的 HTML 转义，不依赖 LF 是否已加载。
+    // 回归背景：曾经直接调用裸的 escapeHtml(...)，而它只是 api.js 闭包内的
+    // 局部函数，并不存在同名全局函数 -> ReferenceError。
+    function esc(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+
     if (user && user.id) {
         if (notLoggedIn) notLoggedIn.style.display = 'none';
         if (loggedIn) loggedIn.style.display = 'block';
         if (statusDot) statusDot.className = 'status-dot connected';
         if (statusText) statusText.innerText = LF.auth.displayName();
         // 头像与按钮都去掉 emoji：按钮只显示名字，头像显示名字首字
-        if (loginBtn) loginBtn.innerHTML = `<span>${LF.escapeHtml(LF.auth.displayName())}</span>`;
+        if (loginBtn) loginBtn.innerHTML = `<span>${esc(LF.auth.displayName())}</span>`;
         setText('profileAvatar', firstChar(LF.auth.displayName()));
 
         setText('profileName', LF.auth.displayName());

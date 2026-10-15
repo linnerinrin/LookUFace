@@ -63,6 +63,11 @@ def check(label, condition, detail=""):
         failures.append(label)
 
 
+def _is_legacy(blob):
+    # 是否为旧版 pickle 格式（不以 v2 魔数开头）
+    return not blob.startswith(b"v2|")
+
+
 print("1) 表结构兼容：新代码在旧库上直接可用（无迁移）")
 db = SessionLocal()
 faces = db.query(UserFace).all()
@@ -79,8 +84,15 @@ for f in faces:
     except StoredFeatureError as exc:
         print(f"        {f.name}: 已拒绝 -> {exc}")
 
-print("3) 旧记录标记为需重新注册，接口不 500")
-face = faces[0]
+print("3) 接口在旧库上可用，且旧格式记录被正确标记")
+# 说明：不假设「第一条记录一定是旧 pickle 格式」——
+# 用户后来用新算法注册过人脸，库里可能已经混有新格式记录。
+# 这里改为按格式分类断言，使用例可重复运行、不依赖库的具体内容。
+legacy = [f for f in faces if _is_legacy(f.features)]
+current = [f for f in faces if not _is_legacy(f.features)]
+print(f"        旧 pickle 记录 {len(legacy)} 条，新格式记录 {len(current)} 条")
+
+face = legacy[0] if legacy else faces[0]
 token = create_access_token({"user_id": face.user_id, "email": "compat@test.local"})
 client = TestClient(app)
 client.headers.update({"Authorization": f"Bearer {token}"})
@@ -88,11 +100,28 @@ client.headers.update({"Authorization": f"Bearer {token}"})
 r = client.get("/api/v1/faces")
 check("GET /faces 返回 200", r.status_code == 200, f"status={r.status_code}")
 items = r.json()["faces"] if r.status_code == 200 else []
-check("读到旧记录", bool(items))
+check("读到人脸记录", bool(items))
 if items:
+    by_name = {item["name"]: item for item in items}
     for item in items:
         print(f"        {item['name']!r} features_current={item['features_current']}")
-    check("旧 pickle 记录被标记为需重新注册", items[0]["features_current"] is False)
+
+    for legacy_face in legacy:
+        item = by_name.get(legacy_face.name)
+        if item is None:
+            continue
+        check(
+            f"旧 pickle 记录 {legacy_face.name!r} 被标记为需重新注册",
+            item["features_current"] is False,
+        )
+    for current_face in current:
+        item = by_name.get(current_face.name)
+        if item is None:
+            continue
+        check(
+            f"新格式记录 {current_face.name!r} 标记为可用",
+            item["features_current"] is True,
+        )
 
 print("4) 会话与计费接口在旧库上可用")
 name = items[0]["name"] if items else None

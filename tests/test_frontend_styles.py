@@ -106,58 +106,48 @@ def test_every_used_button_class_has_real_styles() -> None:
     )
 
 
-def test_billing_button_is_styled_like_sibling_buttons() -> None:
-    """账单按钮必须与同排其他按钮保持一致的尺寸与过渡。
+def test_billing_ui_has_been_removed() -> None:
+    """「账单」按钮与账单弹窗已按需求删除，不得在代码里残留。
 
-    回归用例：``.btn-billing`` 曾完全缺失，按钮无样式。
+    现在改为：签退结算成功后自动弹出支付弹窗（二维码 + 支付链接）。
     """
-    css = (STATIC_DIR / "manager.css").read_text(encoding="utf-8")
-    css_no_comment = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    manager_html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    manager_css = (STATIC_DIR / "manager.css").read_text(encoding="utf-8")
 
-    match = re.search(r"\.btn-billing\s*\{([^}]*)\}", css_no_comment)
-    assert match, ".btn-billing 未定义"
+    for name, text in (("manager.js", manager_js), ("manager.html", manager_html)):
+        for token in ("billingModal", "showBillingModal", "closeBillingModal", "btn-billing"):
+            assert token not in text, f"{name} 仍残留已删除的账单 UI：{token}"
 
-    body = match.group(1)
-    for prop in ("background", "color", "padding", "border-radius", "cursor", "font-weight"):
-        assert prop in body, f".btn-billing 缺少 {prop}，与同排按钮不一致"
-
-    # 与 .btn-modify 的尺寸/过渡保持一致
-    sibling = re.search(r"\.btn-modify\s*\{([^}]*)\}", css_no_comment)
-    assert sibling, ".btn-modify 未定义（对比基准缺失）"
-    sibling_body = sibling.group(1)
-    for prop in ("padding", "border-radius", "font-weight", "transition"):
-        assert prop in body and prop in sibling_body, f"账单按钮缺少 {prop}"
-        assert _value_of(body, prop) == _value_of(sibling_body, prop), (
-            f".btn-billing 与 .btn-modify 的 {prop} 不一致："
-            f"{_value_of(body, prop)!r} vs {_value_of(sibling_body, prop)!r}"
-        )
-
-    # 必须有 hover 态
-    assert re.search(r"\.btn-billing:hover", css_no_comment), ".btn-billing 缺少 hover 样式"
-    assert re.search(r"\.btn-billing:disabled", css_no_comment), ".btn-billing 缺少 disabled 样式"
+    # CSS 里也不应再有账单相关选择器（说明：注释里提到旧名是允许的，故只查选择器形态）
+    css_no_comment = re.sub(r"/\*.*?\*/", "", manager_css, flags=re.DOTALL)
+    assert not re.search(r"\.btn-billing\s*\{", css_no_comment), "CSS 仍残留 .btn-billing 规则"
+    assert not re.search(r"#billingModal\s+\S+\s*\{", css_no_comment), (
+        "CSS 仍残留 #billingModal 规则"
+    )
 
 
-def test_billing_modal_has_form_styles() -> None:
-    """账单弹窗的 label / input 必须与其他弹窗一样有样式覆盖。"""
+def test_pay_modal_exists_and_has_form_styles() -> None:
+    """支付弹窗必须存在，且 label / input 与其他弹窗一样有样式覆盖。"""
+    html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
+    assert 'id="payModal"' in html, "缺少支付弹窗"
+
     css = (STATIC_DIR / "manager.css").read_text(encoding="utf-8")
     css_no_comment = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
 
     for selector in (
-        r"#billingModal \.modal-content",
-        r"#billingModal \.form-group",
-        r"#billingModal \.form-group label",
-        r"#billingModal \.auth-input",
+        r"#payModal \.modal-content",
+        r"#payModal \.form-group",
+        r"#payModal \.form-group label",
+        r"#payModal \.auth-input",
     ):
         assert re.search(selector, css_no_comment), f"缺少样式规则：{selector}"
 
-    # 深色主题也要覆盖
-    assert re.search(r"body\.dark\s+#billingModal", css_no_comment), (
-        "账单弹窗缺少深色主题覆盖"
-    )
+    assert re.search(r"body\.dark\s+#payModal", css_no_comment), "支付弹窗缺少深色主题覆盖"
 
 
-def test_billing_modal_css_matches_checkout_modal() -> None:
-    """账单弹窗与签退弹窗的表单样式应保持一致（同一套设计语言）。"""
+def test_pay_modal_css_matches_checkout_modal() -> None:
+    """支付弹窗与签退弹窗的表单样式应保持一致（同一套设计语言）。"""
     css = (STATIC_DIR / "manager.css").read_text(encoding="utf-8")
     css_no_comment = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
 
@@ -165,28 +155,49 @@ def test_billing_modal_css_matches_checkout_modal() -> None:
         match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css_no_comment)
         return match.group(1) if match else ""
 
-    billing_label = declarations("#billingModal .form-group label")
+    pay_label = declarations("#payModal .form-group label")
     checkout_label = declarations("#checkoutModal .form-group label")
-    assert billing_label and checkout_label
+    assert pay_label and checkout_label
     for prop in ("display", "margin-bottom", "font-size", "font-weight", "color"):
-        assert _value_of(billing_label, prop) == _value_of(checkout_label, prop), (
-            f"账单弹窗与签退弹窗的 label {prop} 不一致"
+        assert _value_of(pay_label, prop) == _value_of(checkout_label, prop), (
+            f"支付弹窗与签退弹窗的 label {prop} 不一致"
         )
 
-    billing_input = declarations("#billingModal .auth-input")
+    pay_input = declarations("#payModal .auth-input")
     checkout_input = declarations("#checkoutModal .auth-input")
-    assert billing_input and checkout_input
+    assert pay_input and checkout_input
     for prop in ("width", "padding", "border", "border-radius", "background", "color", "font-size"):
-        assert _value_of(billing_input, prop) == _value_of(checkout_input, prop), (
-            f"账单弹窗与签退弹窗的 input {prop} 不一致"
+        assert _value_of(pay_input, prop) == _value_of(checkout_input, prop), (
+            f"支付弹窗与签退弹窗的 input {prop} 不一致"
         )
+
+
+def test_payment_placeholder_page_exists() -> None:
+    """支付链接指向的占位页必须存在，且写明「开发中」。"""
+    page = STATIC_DIR / "pay-dev.html"
+    assert page.exists(), "缺少支付占位页 pay-dev.html"
+
+    text = page.read_text(encoding="utf-8")
+    assert "开发中" in text, "占位页必须写明「开发中」"
+
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    assert "pay-dev.html" in manager_js, "支付弹窗必须把链接指向 pay-dev.html"
+
+
+def test_qrcode_placeholder_says_under_development() -> None:
+    """二维码内容为占位，必须写明「开发中」。"""
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    assert "buildPlaceholderQrSvg" in manager_js, "缺少二维码占位图生成函数"
+    # 占位图里必须出现「开发中」文案
+    match = re.search(r"function buildPlaceholderQrSvg[\s\S]*?\n\}", manager_js)
+    assert match, "未找到 buildPlaceholderQrSvg 实现"
+    assert "开发中" in match.group(0), "二维码占位内容必须包含「开发中」"
 
 
 def test_primary_and_danger_buttons_are_defined() -> None:
     """``.btn-primary`` / ``.btn-danger`` 被 HTML 引用，必须有定义。
 
-    ``.btn-primary`` 此前在 manager.css 中缺失，导致账单弹窗里的
-    「打开支付链接」按钮没有配色。
+    ``.btn-primary`` 此前在 manager.css 中缺失，导致弹窗里的主按钮没有配色。
     """
     defined = _defined_classes()
     for cls in ("btn-primary", "btn-danger", "btn-outline"):

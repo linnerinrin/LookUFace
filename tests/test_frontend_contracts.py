@@ -171,18 +171,53 @@ def test_no_page_uses_bare_api_base_in_template_literal() -> None:
     assert not violations, f"以下文件仍在使用 ${{API_BASE}} 拼接：{violations}"
 
 
-def test_payment_endpoint_is_now_reachable_from_frontend() -> None:
-    """回归旧缺陷：/check/pay 前端从未调用，功能实际是死的。
+def test_payment_flow_is_wired_in_frontend() -> None:
+    """支付流程必须已接入前端。
 
-    现在 /billing/quote 必须被前端真实调用，且后端确实注册了该路由。
+    回归背景：旧版后端有 ``/check/pay``，但**前端从未调用过**，功能实际是死的。
+    现在按需求改为：签退结算成功后**自动弹出**支付弹窗（二维码 + 支付链接），
+    不再需要单独点「账单」按钮。
+
+    因此这里断言的是「前端确实有完整的支付闭环」：
+      * 有支付弹窗逻辑，且由签退响应驱动（不再二次查询账单）；
+      * 二维码为占位内容「开发中」；
+      * 支付链接指向占位页 pay-dev.html。
     """
     texts = "\n".join(p.read_text(encoding="utf-8") for p in STATIC_DIR.glob("*.js"))
-    assert "/billing/quote" in texts, "前端仍未接入计费报价接口"
 
+    assert "showPayModal" in texts, "缺少支付弹窗逻辑"
+    assert "buildPlaceholderQrSvg" in texts, "缺少二维码占位图生成"
+    assert "pay-dev.html" in texts, "支付链接未指向占位页"
+    assert "开发中" in texts, "二维码占位内容应写明「开发中」"
+
+    # 签退成功后必须调用支付弹窗（否则支付入口又变成"死"的）
+    manager = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    checkout_handler = manager[manager.find("confirmCheckoutBtn"):]
+    assert "showPayModal(" in checkout_handler, "签退成功后未弹出支付弹窗"
+
+    # 后端仍保留账单接口（供 API 集成与调试）
     routes = _backend_routes()
     assert any(
         method == "POST" and path == "/api/v1/billing/quote" for method, path in routes
     ), "后端未注册 /api/v1/billing/quote"
+
+
+def test_billing_quote_endpoint_still_enforces_payable() -> None:
+    """账单接口仍须坚持「无应付金额则不给付款入口」。
+
+    前端 UI 已不再单独调用它，但接口语义要保持正确 ——
+    否则将来一旦有人接回前端，就会重现「0 元也能出账」的问题。
+    """
+    import inspect
+
+    from app.api.routes import billing
+
+    source = inspect.getsource(billing)
+    assert "payable" in source, "账单接口丢失 payable 判断"
+    assert 'qrcode_url=""' in source or 'qrcode_url=""' in source.replace(" ", ""), (
+        "无应付金额时未清空二维码"
+    )
+    assert "pay_url=\"\"" in source or 'pay_url=""' in source, "无应付金额时未清空支付链接"
 
 
 def test_camera_websocket_paths_match() -> None:
@@ -197,12 +232,22 @@ def test_camera_websocket_paths_match() -> None:
     assert "?token=" in core, "摄像头 WS 必须携带 token（旧版完全不认证）"
 
 
+#: 独立占位页，不参与业务、也不需要 api.js
+STANDALONE_PAGES = {"pay-dev.html"}
+
+
 def test_all_html_files_load_api_js_first() -> None:
-    """所有页面必须首先加载 api.js，且顺序在业务脚本之前。"""
+    """业务页面必须首先加载 api.js，且顺序在业务脚本之前。
+
+    ``pay-dev.html`` 是纯静态占位页（不调用任何接口），故豁免；
+    它刻意不依赖 api.js，以免"占位页也要能独立打开"这一前提被破坏。
+    """
     pages = sorted(STATIC_DIR.glob("*.html"))
     assert pages, "未找到任何页面"
 
     for page in pages:
+        if page.name in STANDALONE_PAGES:
+            continue
         text = page.read_text(encoding="utf-8")
         scripts = re.findall(r"<script src=\"([^\"]+)\"", text)
         if "api.js" not in scripts:

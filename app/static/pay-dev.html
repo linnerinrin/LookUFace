@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>支付功能开发中 | LookUFace</title>
+    <link rel="icon" type="image/png" href="logo.png">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', 'Microsoft YaHei', Arial, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: linear-gradient(135deg, #eef2f7 0%, #dfe7f1 100%);
+            color: #1f2a37;
+        }
+        body.dark {
+            background: linear-gradient(135deg, #1a1a2e 0%, #12121f 100%);
+            color: #e6e8eb;
+        }
+        .card {
+            width: 100%;
+            max-width: 460px;
+            background: rgba(255, 255, 255, 0.96);
+            border-radius: 24px;
+            padding: 32px 28px;
+            box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+            text-align: center;
+        }
+        body.dark .card { background: rgba(30, 30, 50, 0.96); }
+        .badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            background: rgba(255, 152, 0, 0.15);
+            color: #b26a00;
+            margin-bottom: 18px;
+        }
+        body.dark .badge { color: #ffb74d; }
+        h1 {
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .sub {
+            font-size: 14px;
+            color: #6b7280;
+            line-height: 1.7;
+            margin-bottom: 22px;
+        }
+        body.dark .sub { color: #9aa4b2; }
+        .amount {
+            font-size: 40px;
+            font-weight: 800;
+            color: #4a90e2;
+            margin: 6px 0 4px;
+            letter-spacing: -0.5px;
+        }
+        .amount-label {
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 20px;
+        }
+        body.dark .amount-label { color: #9aa4b2; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            text-align: left;
+            margin-bottom: 22px;
+        }
+        table th, table td {
+            padding: 9px 4px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+            vertical-align: top;
+        }
+        table th {
+            width: 38%;
+            font-weight: 500;
+            color: #6b7280;
+        }
+        body.dark table th { color: #9aa4b2; }
+        table td { font-weight: 600; word-break: break-all; }
+        .notice {
+            font-size: 13px;
+            line-height: 1.8;
+            text-align: left;
+            padding: 14px 16px;
+            border-radius: 12px;
+            background: rgba(74, 144, 226, 0.1);
+            color: #2c5f9e;
+            margin-bottom: 22px;
+        }
+        body.dark .notice { color: #9cc3f0; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            background: #4a90e2;
+            color: #fff;
+        }
+        .btn:hover { background: #3a7bc8; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <span class="badge">开发中 · UNDER DEVELOPMENT</span>
+        <h1>支付功能开发中</h1>
+        <p class="sub">本页面为占位页，真实的在线支付通道尚未接入。</p>
+
+        <div class="amount" id="amount">--</div>
+        <div class="amount-label">应付金额</div>
+
+        <table>
+            <tbody id="detailBody">
+                <tr><th>姓名</th><td id="vName">--</td></tr>
+                <tr><th>计费时长</th><td id="vMinutes">--</td></tr>
+                <tr><th>单价</th><td id="vRate">--</td></tr>
+            </tbody>
+        </table>
+
+        <div class="notice">
+            该链接由「账单」弹窗生成，参数与实际结算一致；<br>
+            接入真实支付时，把二维码内容与跳转地址替换为收银台下单结果即可。
+        </div>
+
+        <a class="btn" href="idx.html">返回首页</a>
+    </div>
+
+    <script>
+        // 读取并展示 URL 参数，便于确认"支付链接携带了什么"
+        (function () {
+            var params = new URLSearchParams(window.location.search);
+            var name = params.get('name') || '--';
+            var minutes = params.get('minutes') || '0';
+            var amount = params.get('amount') || '0.00';
+            var rate = params.get('rate') || '0.50';
+
+            function setText(id, text) {
+                var el = document.getElementById(id);
+                if (el) el.textContent = text;
+            }
+
+            setText('amount', '¥ ' + amount);
+            setText('vName', name);
+            setText('vMinutes', minutes + ' 分钟');
+            setText('vRate', rate + ' 元/分钟');
+
+            // 主题与本项目其它页面保持一致
+            try {
+                if (window.localStorage.getItem('theme') === 'dark') {
+                    document.body.classList.add('dark');
+                }
+            } catch (e) { /* 隐私模式下忽略 */ }
+
+            window.addEventListener('storage', function (event) {
+                if (event.key === 'theme') {
+                    document.body.classList.toggle(
+                        'dark',
+                        window.localStorage.getItem('theme') === 'dark'
+                    );
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

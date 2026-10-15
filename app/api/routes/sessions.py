@@ -59,12 +59,17 @@ async def check_out(
     current_user: CurrentUser,
     db: DbSession,
 ) -> CheckOutResponse:
-    """签退（``away=false``）或暂离（``away=true``）。"""
+    """签退（``away=false``）或暂离（``away=true``）。
+
+    可选传入 ``checkout_time`` 自定义结算时刻（事后补签退用）。
+    服务端会校验它不早于签到时间、不晚于当前时间。
+    """
     result = session_service.check_out(
         db,
         user_id=current_user.id,
         name=request.name,
         away=request.away,
+        checkout_time=request.checkout_time,
     )
     billing = result.billing
     detail = result.breakdown

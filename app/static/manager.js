@@ -273,11 +273,9 @@ function renderFaces(faces) {
             ? `<button class="btn-checkout" data-action="checkout">签退</button>`
             : `<button class="btn-checkin" data-action="checkin">签到</button>`;
 
-        // 只有正在计时的人才有「账」可看；离线后不再显示账单入口
-        // （离线时接口也会返回 payable=false 并留空二维码与支付链接）。
-        const billingBtn = face.is_online
-            ? `<button class="btn-billing" data-action="billing">账单</button>`
-            : '';
+        // 说明：原先这里还有一个「账单」按钮。
+        // 按需求已删除 —— 账单不再单独查询，改为**签退结算成功后自动弹出**
+        // 支付弹窗（二维码 + 支付链接），避免「没签退也能出账」的困惑。
 
         // 注意：名字只进 data-name 属性（经 escapeHtml 处理），绝不拼进 onclick。
         // 旧版把名字插进 onclick="f('...')" 且只做了 \' 转义，可被注入。
@@ -295,7 +293,6 @@ function renderFaces(faces) {
                     <button class="btn-preview" data-action="preview">预览</button>
                     <button class="btn-modify" data-action="modify">修改</button>
                     ${onlineBtn}
-                    ${billingBtn}
                     <button class="btn-delete" data-action="delete">删除</button>
                 </div>
             </div>
@@ -320,7 +317,6 @@ document.getElementById('facesGrid').addEventListener('click', function (event) 
         case 'checkin': checkinFace(name); break;
         case 'checkout': showCheckoutModal(name); break;
         case 'delete': deleteFace(name); break;
-        case 'billing': showBillingModal(name); break;
     }
 });
 
@@ -437,47 +433,64 @@ document.getElementById('confirmCheckinBtn').addEventListener('click', async () 
     }
 });
 
+/** 把 Date 转成 datetime-local 控件需要的本地时间字符串（精确到秒）。 */
+function toLocalInputValue(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+        + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+}
+
+/** datetime-local 控件的值 -> 提交给后端的字符串（无时区，服务端按本地时间解释）。 */
+function fromLocalInputValue(value) {
+    if (!value) return null;
+    // 控件在 step=1 时给出 "YYYY-MM-DDTHH:MM" 或 "YYYY-MM-DDTHH:MM:SS"
+    return value.length === 16 ? value + ':00' : value;
+}
+
 function showCheckoutModal(name) {
     checkoutTargetName = name;
     const face = facesData.find(f => f.name === name);
     if (!face) return;
 
-    // ── 关键修复 ──────────────────────────────────────────────────────────
-    // 旧版把「在线且未暂离」默认勾选为「暂离」：
-    //     const defaultAway = face.is_online && !face.is_away;
-    //     document.getElementById('checkoutAway').checked = defaultAway;
-    // 而「暂离」走的是不结算的分支，返回的 session_minutes / amount 必然为 0，
-    // 于是用户点「确认签退」看到的是「0 分钟 0 元」；
-    // 第二次打开时标题变成「签退结算」但复选框**没有复位**，仍是勾选状态，
-    // 再次提交依然走暂离分支 —— 表现为「无论多久都是 0 分钟 0 元」。
-    //
-    // 现在：默认永远是「签退结算」（复选框不勾），暂离必须由用户显式勾选。
+    // ── 关键修复（保留）──────────────────────────────────────────────────
+    // 旧版把「在线且未暂离」默认勾选为「暂离」，而暂离走的是不结算分支，
+    // 返回的 session_minutes / amount 必然为 0，表现为「无论多久都是 0 分钟 0 元」。
+    // 现在默认永远是「签退结算」，暂离必须由用户显式勾选。
     const awayCheckbox = document.getElementById('checkoutAway');
     if (awayCheckbox) awayCheckbox.checked = false;
 
     const isOnline = !!face.is_online;
     const isAway = !!face.is_away;
 
-    document.getElementById('checkoutCheckinTime').value = face.checkin_time
-        ? new Date(face.checkin_time).toLocaleString()
-        : '未签到';
-
-    // 在场时间改为只读展示，且由服务端 /sessions/status 回填 ——
-    // 前端本地根据 checkin_time 算出来的值可能与服务端不一致（时钟、暂离扣除）。
+    const checkinEl = document.getElementById('checkoutCheckinTime');
+    const customEl = document.getElementById('checkoutCustomTime');
     const durationEl = document.getElementById('checkoutDuration');
-    if (durationEl) durationEl.value = isOnline ? '计算中…' : '未在计时';
-
     const title = document.getElementById('checkoutTitle');
     const button = document.getElementById('confirmCheckoutBtn');
     const hint = document.getElementById('checkoutHint');
+    const errorEl = document.getElementById('checkoutError');
+
+    if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+    const checkinDate = face.checkin_time ? new Date(face.checkin_time) : null;
+    if (checkinEl) {
+        checkinEl.value = checkinDate ? checkinDate.toLocaleString() : '未签到';
+    }
+
+    // 默认签退时间 = 现在（精确到秒），可由用户改成真实离开时间
+    if (customEl) {
+        customEl.value = toLocalInputValue(new Date());
+        customEl.max = toLocalInputValue(new Date());
+    }
 
     if (!isOnline) {
-        // 未在计时：既不能签退也不能暂离
         if (title) title.textContent = '未在计时';
         if (button) {
             button.textContent = '未在计时，无需签退';
             button.disabled = true;
         }
+        if (durationEl) durationEl.value = '未在计时';
+        if (customEl) customEl.disabled = true;
         if (hint) hint.textContent = '该人脸当前没有进行中的会话。请先签到后再操作。';
     } else {
         if (title) title.textContent = isAway ? '暂离中 · 签退结算' : '签退结算';
@@ -485,34 +498,58 @@ function showCheckoutModal(name) {
             button.textContent = '确认签退结算';
             button.disabled = false;
         }
-        if (hint) {
-            hint.textContent = '在场时长与金额完全由服务端按签到时间计算，前端不参与。'
-                + '勾选「仅标记暂离」则不会结算，归位后继续计时。';
-        }
+        if (customEl) customEl.disabled = false;
+        if (durationEl) durationEl.value = '计算中…';
+        if (hint) hint.textContent = '时长与金额由服务端按「签退时间」计算，前端不参与。';
     }
 
     document.getElementById('checkoutModal').style.display = 'flex';
 
-    // 用服务端数据回填在场时间与明细
+    // 抓到服务端的算式明细，供本地预演使用
+    let serverStatus = null;
+
+    function preview() {
+        if (!durationEl) return;
+        if (!serverStatus || !serverStatus.is_online) {
+            durationEl.value = '未在计时';
+            return;
+        }
+        // 本地按「签到时间 -> 签退时间」预演时长，仅用于填表时的即时反馈；
+        // 真正的金额一律以服务端签退结果为准。
+        const settleValue = customEl && customEl.value ? customEl.value : null;
+        const settleDate = settleValue ? new Date(settleValue) : new Date();
+        const checkin = serverStatus.checkin_time ? new Date(serverStatus.checkin_time) : null;
+
+        if (!checkin) { durationEl.value = '未知'; return; }
+        if (settleDate < checkin) {
+            durationEl.value = '签退时间早于签到时间';
+            return;
+        }
+        const totalMinutes = Math.floor((settleDate - checkin) / 60000);
+        const awayMinutes = serverStatus.away_minutes || 0;
+        const billable = Math.max(0, totalMinutes - awayMinutes);
+        const rate = serverStatus.rate_per_minute || 0;
+
+        durationEl.value = formatMinutes(totalMinutes)
+            + (awayMinutes ? '（其中暂离 ' + formatMinutes(awayMinutes) + '）' : '')
+            + ' → 计费 ' + billable + ' 分钟，应付 ¥ ' + (billable * rate).toFixed(2);
+    }
+
     if (isOnline) {
+        // 输入变化时即时预演
+        if (customEl) {
+            customEl.oninput = preview;
+            customEl.onchange = preview;
+        }
+        // 用服务端的权威数据回填（含暂离扣除、费率、签到时间）
         LF.api.post('/sessions/status', { name: name })
             .then(function (status) {
-                if (checkoutTargetName !== name) return;  // 期间切换了对象
-                if (durationEl && status.is_online) {
-                    durationEl.value = formatMinutes(status.elapsed_minutes)
-                        + '（计费 ' + status.preview_minutes + ' 分钟）';
-                }
-                if (hint) {
-                    hint.textContent =
-                        '在场 ' + formatMinutes(status.elapsed_minutes)
-                        + (status.away_minutes ? '，其中暂离 ' + formatMinutes(status.away_minutes) : '')
-                        + '；计费 ' + status.preview_minutes + ' 分钟，应付 ¥ '
-                        + (status.amount || 0).toFixed(2)
-                        + '。勾选「仅标记暂离」则不结算。';
-                }
+                if (checkoutTargetName !== name) return;
+                serverStatus = status;
                 if (isAway || status.is_away) {
                     if (title) title.textContent = '暂离中 · 签退结算';
                 }
+                preview();
             })
             .catch(function () {
                 if (durationEl) durationEl.value = '暂时取不到（以签退结果为准）';
@@ -537,14 +574,20 @@ function closeCheckoutModal() {
 document.getElementById('confirmCheckoutBtn').addEventListener('click', async () => {
     const away = document.getElementById('checkoutAway')?.checked || false;
     const button = document.getElementById('confirmCheckoutBtn');
+    const errorEl = document.getElementById('checkoutError');
+    const customEl = document.getElementById('checkoutCustomTime');
+
+    if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
     button.disabled = true;
 
+    // 暂离不使用自定义时间（暂离不结算）；签退则把用户填的时间交给服务端。
+    const payload = { name: checkoutTargetName, away: away };
+    if (!away && customEl && customEl.value) {
+        payload.checkout_time = fromLocalInputValue(customEl.value);
+    }
+
     try {
-        // 时长与金额完全由服务端按数据库时间戳计算，前端不参与。
-        const data = await LF.api.post('/sessions/checkout', {
-            name: checkoutTargetName,
-            away: away
-        });
+        const data = await LF.api.post('/sessions/checkout', payload);
 
         // 必须区分「暂离」与「签退结算」：
         // 暂离不结算，此时 session_minutes / amount 必然是 0，
@@ -553,146 +596,152 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
         const settled = data.settled === true;
 
         if (data.success === false) {
+            if (errorEl) { errorEl.textContent = data.message; errorEl.style.display = 'block'; }
             LF.toast(data.message, true);
-        } else if (isAwayAction && !settled) {
-            LF.toast(
-                data.message + '（暂离不结算，归位后继续计时）',
-                false
-            );
+            return;   // 不关弹窗，便于修正签退时间后重试
+        }
+
+        closeCheckoutModal();
+
+        if (isAwayAction && !settled) {
+            LF.toast(data.message + '（暂离不结算，归位后继续计时）', false);
         } else if (settled) {
-            LF.toast(
-                `签退成功：在场 ${formatMinutes(data.elapsed_minutes)}` +
-                (data.away_minutes ? `（其中暂离 ${formatMinutes(data.away_minutes)}）` : '') +
-                `，计费 ${data.session_minutes} 分钟，应付 ¥ ${(data.amount || 0).toFixed(2)}`,
-                false
-            );
+            // 签退结算成功 -> 弹出支付弹窗（二维码 + 支付链接）
+            showPayModal(checkoutTargetName, data);
         } else {
             LF.toast(data.message, false);
         }
     } catch (err) {
-        LF.toast(err.message || '操作失败', true);
+        // 校验类错误（签退时间早于签到、晚于当前）留在弹窗里显示，方便直接改
+        const message = err.message || '操作失败';
+        if (errorEl) { errorEl.textContent = message; errorEl.style.display = 'block'; }
+        LF.toast(message, true);
     } finally {
         button.disabled = false;
-        closeCheckoutModal();
         loadFaces();
     }
 });
 
 
-/* ==================== 账单 ==================== */
+/* ==================== 支付 ==================== */
 
 /**
- * 生成并展示账单二维码。
+ * 二维码占位图内容。
  *
- * 时长与金额完全由服务端按签到时间计算（POST /billing/quote 只传姓名），
- * 旧版是把前端输入框里的「本次在线时长」当参数传给 /check/pay，
- * 既能免单也能超收，且前端根本没有调用入口。
+ * 需求：二维码内容暂且写文字「开发中」，等接入真实收银台后再替换为下单结果。
+ * 这里用内联 SVG（data URI）而不是位图，好处是：
+ *   - 不新增静态资源文件，也不依赖网络；
+ *   - 文案清晰可读，一眼就知道是占位而不是"扫不出来"。
+ * 接入真实支付时，只需把下面的 `src` 换成服务端返回的二维码地址。
  */
-/**
- * 展示账单：**在场时间 + 应付价格**。
- *
- * 按需求：只有存在应付金额时才显示二维码与支付链接；
- * 金额为 0（未计时 / 不足一分钟 / 已签退离线）时，付款区整体隐藏，
- * 只显示在场时间与价格说明 —— 避免"0 元也能出账"。
- */
-async function showBillingModal(name) {
-    const modal = document.getElementById('billingModal');
-    if (!modal) return;
-
-    const paySection = document.getElementById('billingPaySection');
-    const noPaySection = document.getElementById('billingNoPaySection');
-    const noPayNotice = document.getElementById('billingNoPayNotice');
-    const qrcode = document.getElementById('billingQrcode');
-    const hint = document.getElementById('billingQrcodeHint');
-    const payBtn = document.getElementById('billingPayLinkBtn');
-    const summaryEl = document.getElementById('billingSummary');
-    const awayGroup = document.getElementById('billingAwayGroup');
-
-    // 打开时先清空，避免显示上一个人的残留
-    document.getElementById('billingName').value = name;
-    document.getElementById('billingTitle').textContent = name + ' 的账单';
-    document.getElementById('billingElapsed').value = '计算中…';
-    document.getElementById('billingMinutes').value = '计算中…';
-    document.getElementById('billingAmount').value = '计算中…';
-    document.getElementById('billingAway').value = '—';
-    if (summaryEl) summaryEl.textContent = '';
-    if (awayGroup) awayGroup.style.display = 'none';
-    paySection.style.display = 'none';
-    noPaySection.style.display = 'none';
-    qrcode.style.display = 'none';
-    qrcode.removeAttribute('src');
-    hint.textContent = '';
-    payBtn.disabled = true;
-    payBtn.dataset.payUrl = '';
-    modal.style.display = 'flex';
-
-    try {
-        const quote = await LF.api.post('/billing/quote', { name: name });
-
-        document.getElementById('billingElapsed').value = quote.is_online
-            ? formatMinutes(quote.elapsed_minutes)
-            : (quote.elapsed_minutes ? formatMinutes(quote.elapsed_minutes) : '未在计时');
-        document.getElementById('billingAway').value = formatMinutes(quote.away_minutes);
-        if (awayGroup) awayGroup.style.display = quote.away_minutes > 0 ? '' : 'none';
-
-        document.getElementById('billingMinutes').value =
-            quote.minutes + ' 分钟（单价 ' + (quote.rate_per_minute || 0).toFixed(2) + ' 元/分钟）';
-        document.getElementById('billingAmount').value = '¥ ' + (quote.amount || 0).toFixed(2);
-
-        if (summaryEl) summaryEl.textContent = quote.summary || '';
-
-        if (quote.payable && quote.qrcode_url) {
-            // 有应付金额：开放二维码与支付链接
-            qrcode.src = quote.qrcode_url;
-            qrcode.style.display = 'block';
-            hint.textContent = '扫码支付 ¥ ' + (quote.amount || 0).toFixed(2);
-            payBtn.dataset.payUrl = quote.pay_url || '';
-            payBtn.disabled = !quote.pay_url;
-            paySection.style.display = '';
-            noPaySection.style.display = 'none';
-        } else {
-            // 无应付金额：不出二维码、不给支付链接
-            paySection.style.display = 'none';
-            noPaySection.style.display = '';
-            if (noPayNotice) {
-                noPayNotice.textContent = quote.payable === false
-                    ? (quote.summary || '当前没有应付金额。')
-                    : '当前没有应付金额。';
-            }
-            qrcode.style.display = 'none';
-            qrcode.removeAttribute('src');
-            hint.textContent = '';
-            payBtn.dataset.payUrl = '';
-            payBtn.disabled = true;
-        }
-    } catch (err) {
-        document.getElementById('billingElapsed').value = '—';
-        document.getElementById('billingMinutes').value = '—';
-        document.getElementById('billingAmount').value = '—';
-        if (summaryEl) summaryEl.textContent = '获取账单失败：' + err.message;
-        paySection.style.display = 'none';
-        noPaySection.style.display = '';
-        if (noPayNotice) noPayNotice.textContent = '获取账单失败：' + err.message;
-        LF.log.error('生成账单失败: ' + err.message);
-    }
+function buildPlaceholderQrSvg(text) {
+    const label = text || '开发中';
+    const svg = ''
+        + '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
+        + '<rect width="200" height="200" fill="#ffffff"/>'
+        // 四角定位框，让它一眼能看出"这是二维码占位"
+        + '<rect x="12" y="12" width="42" height="42" fill="none" stroke="#c9ced6" stroke-width="8"/>'
+        + '<rect x="146" y="12" width="42" height="42" fill="none" stroke="#c9ced6" stroke-width="8"/>'
+        + '<rect x="12" y="146" width="42" height="42" fill="none" stroke="#c9ced6" stroke-width="8"/>'
+        + '<rect x="24" y="24" width="18" height="18" fill="#c9ced6"/>'
+        + '<rect x="158" y="24" width="18" height="18" fill="#c9ced6"/>'
+        + '<rect x="24" y="158" width="18" height="18" fill="#c9ced6"/>'
+        // 右上角的"开发中"角标
+        + '<text x="100" y="104" text-anchor="middle" font-family="Microsoft YaHei,Arial,sans-serif"'
+        + ' font-size="24" font-weight="700" fill="#ff9800">' + label + '</text>'
+        + '<text x="100" y="130" text-anchor="middle" font-family="Microsoft YaHei,Arial,sans-serif"'
+        + ' font-size="11" fill="#8a94a3">支付通道未接入</text>'
+        + '</svg>';
+    // 用 encodeURIComponent 而不是 base64，便于直接阅读与排查
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
-function closeBillingModal() {
-    const modal = document.getElementById('billingModal');
+/**
+ * 签退结算成功后展示的支付弹窗。
+ *
+ * @param {string} name  人脸名
+ * @param {object} data  /sessions/checkout 的响应（已结算）
+ *
+ * 金额与时长直接取自签退响应 —— 那是服务端的权威结算结果，
+ * 不再二次查询、也不允许前端改动。
+ */
+function showPayModal(name, data) {
+    const modal = document.getElementById('payModal');
+    if (!modal) return;
+
+    const elapsed = data.elapsed_minutes || 0;
+    const away = data.away_minutes || 0;
+    const minutes = data.session_minutes || 0;
+    const amount = data.amount || 0;
+    const rate = data.rate_per_minute || 0;
+
+    const setText = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.value = text;
+    };
+
+    document.getElementById('payTitle').textContent = name + ' · 签退完成，待支付';
+    setText('payName', name);
+    setText('payElapsed', formatMinutes(elapsed));
+    setText('payAway', formatMinutes(away));
+    setText('payMinutes', minutes + ' 分钟（单价 ' + rate.toFixed(2) + ' 元/分钟）');
+    setText('payAmount', '¥ ' + amount.toFixed(2));
+
+    const awayGroup = document.getElementById('payAwayGroup');
+    if (awayGroup) awayGroup.style.display = away > 0 ? '' : 'none';
+
+    const summaryEl = document.getElementById('paySummary');
+    if (summaryEl) {
+        summaryEl.textContent = '本次在场 ' + formatMinutes(elapsed)
+            + (away ? '（其中暂离 ' + formatMinutes(away) + '）' : '')
+            + '，计费 ' + minutes + ' 分钟，应付 ¥ ' + amount.toFixed(2) + '。';
+    }
+
+    // 二维码：占位内容「开发中」
+    const qrcode = document.getElementById('payQrcode');
+    if (qrcode) {
+        qrcode.src = buildPlaceholderQrSvg('开发中');
+        qrcode.alt = '支付二维码（开发中）';
+    }
+
+    // 支付链接：指向静态占位页 pay-dev.html，并带上本次结算参数
+    const payBtn = document.getElementById('payLinkBtn');
+    if (payBtn) {
+        const params = new URLSearchParams({
+            name: name,
+            minutes: String(minutes),
+            amount: amount.toFixed(2),
+            rate: rate.toFixed(2)
+        });
+        const url = 'pay-dev.html?' + params.toString();
+        payBtn.dataset.payUrl = url;
+        payBtn.disabled = false;
+    }
+
+    // 金额为 0（不足一分钟）时说明清楚，避免用户以为漏了
+    if (amount <= 0 && summaryEl) {
+        summaryEl.textContent += ' 不足 1 分钟按规则不计费，此处仅作展示。';
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closePayModal() {
+    const modal = document.getElementById('payModal');
     if (modal) modal.style.display = 'none';
 }
 
-document.getElementById('billingPayLinkBtn')?.addEventListener('click', function () {
+document.getElementById('payLinkBtn')?.addEventListener('click', function () {
     const url = this.dataset.payUrl;
     if (url) window.open(url, '_blank', 'noopener');
 });
 
 document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeBillingModal();
+    if (e.key === 'Escape') { closePayModal(); closeCheckoutModal(); }
 });
 
-window.showBillingModal = showBillingModal;
-window.closeBillingModal = closeBillingModal;
+window.showPayModal = showPayModal;
+window.closePayModal = closePayModal;
 
 // 页面可见性变化时刷新
 document.addEventListener('visibilitychange', function() {

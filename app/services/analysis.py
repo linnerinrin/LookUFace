@@ -132,8 +132,14 @@ class FaceAnalysisService:
 
     CACHE_TTL_SECONDS = 3.0
 
+    #: 已知特征的内存缓存有效期（秒）。理由见 load_known_features 的说明。
+    KNOWN_FEATURES_TTL_SECONDS = 5.0
+
     def __init__(self) -> None:
         self._cache = _MatchCache(ttl_seconds=self.CACHE_TTL_SECONDS)
+        #: user_id -> (过期时刻 monotonic, 特征列表)
+        self._known_cache: dict[int, tuple[float, list[tuple[str, np.ndarray]]]] = {}
+        self._known_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # 分析
@@ -221,9 +227,33 @@ class FaceAnalysisService:
     # ------------------------------------------------------------------ #
     # 识别
     # ------------------------------------------------------------------ #
-    @staticmethod
-    def load_known_features(user_id: int) -> list[tuple[str, np.ndarray]]:
-        """从数据库载入该用户所有可用的特征矩阵。"""
+    #: 已知特征的内存缓存有效期（秒）。
+    #:
+    #: 为什么必须有：特征矩阵是 468×468，序列化后**约 1.44 MB/人**，
+    #: 反序列化一次要 ~28 ms。而 ``analyze_image`` 是**每帧**调用的
+    #: （约 7 fps），若每次都读库+解析 JSON，10 个人就是每帧解析 ~14 MB，
+    #: 单是解析开销就会把帧率拖垮。
+    #:
+    #: 缓存的失效由 ``clear_cache()`` 负责 —— 注册 / 重命名 / 删除人脸时
+    #: 路由层都会调用它，因此这里用一个短 TTL 兜底即可（例如别的进程改了库）。
+
+    def load_known_features(self, user_id: int) -> list[tuple[str, np.ndarray]]:
+        """载入该用户所有可用的特征矩阵（带短 TTL 缓存）。"""
+        now = time.monotonic()
+
+        with self._known_lock:
+            cached = self._known_cache.get(user_id)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+
+        loaded = self._load_known_features_uncached(user_id)
+
+        with self._known_lock:
+            self._known_cache[user_id] = (now + self.KNOWN_FEATURES_TTL_SECONDS, loaded)
+        return loaded
+
+    def _load_known_features_uncached(self, user_id: int) -> list[tuple[str, np.ndarray]]:
+        """真正读库并解析特征。"""
         db = SessionLocal()
         try:
             records = list(list_faces(db, user_id))
@@ -237,6 +267,13 @@ class FaceAnalysisService:
             except StoredFeatureError as exc:
                 # 旧 pickle 记录：不复用、不反序列化
                 logger.warning("人脸 %s 的特征不可用（%s）", record.name, exc)
+
+        logger.debug(
+            "已载入 %d 条人脸特征（user_id=%s，缓存 %.1f 秒）",
+            len(known),
+            user_id,
+            self.KNOWN_FEATURES_TTL_SECONDS,
+        )
         return known
 
     def _recognize(
@@ -312,7 +349,14 @@ class FaceAnalysisService:
         return serialize_features(matrix)
 
     def clear_cache(self) -> None:
+        """清空全部缓存。
+
+        注册 / 重命名 / 删除人脸后必须调用，否则最多 ``TTL`` 秒内仍在用旧特征
+        （表现为「刚注册的人认不出来，过几秒又好了」）。
+        """
         self._cache.clear()
+        with self._known_lock:
+            self._known_cache.clear()
 
 
 face_analysis_service = FaceAnalysisService()

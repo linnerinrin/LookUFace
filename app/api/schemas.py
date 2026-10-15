@@ -187,6 +187,16 @@ class CheckInRequest(BaseModel):
 class CheckOutRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     away: bool = False
+    #: 自定义签退时间（可选）。缺省表示「就是现在」。
+    #:
+    #: 使用场景：用户已经离开、事后在仓库管理页补签退 —— 此时应按**真实离开时间**
+    #: 结算，而不是按「管理员几点点的按钮」结算。
+    #:
+    #: 接受 ISO8601（``2026-10-16T03:20``）或 ``YYYY-MM-DD HH:MM[:SS]``，
+    #: 也接受 ``datetime-local`` 控件的取值。``Z`` 后缀按 UTC 解释。
+    #:
+    #: 注意：暂离（``away=true``）不使用该字段 —— 暂离不结算。
+    checkout_time: datetime | None = None
 
 
 class SessionStatusRequest(BaseModel):

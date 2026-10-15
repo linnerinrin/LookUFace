@@ -18,7 +18,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -236,12 +236,26 @@ class SessionService:
         away: bool,
         now: datetime | None = None,
         skip_debounce: bool = False,
+        checkout_time: datetime | None = None,
     ) -> ActionResult:
-        """签退（``away=False``）或标记暂离（``away=True``）。"""
+        """签退（``away=False``）或标记暂离（``away=True``）。
+
+        ``checkout_time`` 允许**自定义结算时刻**（事后补签退用）。它只影响签退结算，
+        不影响暂离 —— 暂离不结算，改变「暂离时刻」没有意义。
+
+        校验规则：
+
+        * 不得早于本次会话的签到时间（否则会得到负时长）；
+        * 不得晚于当前时间（不允许「预支」未来的时长）。
+
+        越界时抛 ``ValidationError`` 而不是静默夹取，避免账目被悄悄改错。
+        """
         moment = now or datetime.now()
         name = (name or "").strip()
         if not name:
             raise ValidationError("人名为空")
+
+        settle_at = moment if away else self._resolve_settle_moment(checkout_time, moment)
 
         with self._lock_for(user_id, name):
             face = self._load_face(db, user_id, name)
@@ -256,7 +270,61 @@ class SessionService:
 
             if away:
                 return self._mark_away(db, face, user_id, name, moment, skip_debounce)
-            return self._finalize(db, face, user_id, name, moment)
+
+            self._validate_settle_time(face, settle_at, moment, name)
+            return self._finalize(db, face, user_id, name, settle_at, reason="manual")
+
+    # ------------------------------------------------------------------ #
+    # 结算时刻的校验
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _resolve_settle_moment(
+        checkout_time: datetime | None,
+        fallback: datetime,
+    ) -> datetime:
+        """把前端传来的签退时间归一化成**与系统一致的无时区本地时间**。
+
+        带时区的值（如以 ``Z`` 结尾）先转成本地时间；``datetime-local`` 控件
+        提交的值本身无时区，直接使用。
+        """
+        if checkout_time is None:
+            return fallback
+        if checkout_time.tzinfo is not None:
+            return checkout_time.astimezone().replace(tzinfo=None)
+        return checkout_time
+
+    @staticmethod
+    def _validate_settle_time(
+        face: UserFace,
+        settle_at: datetime,
+        now: datetime,
+        name: str,
+    ) -> None:
+        """校验自定义签退时间是否合法。"""
+        checkin = face.checkin_time
+        if checkin is not None and settle_at < checkin:
+            raise ValidationError(
+                f"签退时间不能早于签到时间（签到于 {checkin:%Y-%m-%d %H:%M:%S}，"
+                f"你填的是 {settle_at:%Y-%m-%d %H:%M:%S}）",
+                code="checkout_before_checkin",
+                details={
+                    "name": name,
+                    "checkin_time": checkin.isoformat(sep=" "),
+                    "checkout_time": settle_at.isoformat(sep=" "),
+                },
+            )
+        # 容忍 60 秒时钟误差，避免"管理员机器比服务器快几秒"就报错
+        if settle_at > now + timedelta(seconds=60):
+            raise ValidationError(
+                f"签退时间不能晚于当前时间（当前约 {now:%Y-%m-%d %H:%M:%S}，"
+                f"你填的是 {settle_at:%Y-%m-%d %H:%M:%S}）",
+                code="checkout_in_future",
+                details={
+                    "name": name,
+                    "now": now.isoformat(sep=" "),
+                    "checkout_time": settle_at.isoformat(sep=" "),
+                },
+            )
 
     def _mark_away(
         self,

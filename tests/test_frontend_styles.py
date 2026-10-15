@@ -644,80 +644,92 @@ def test_online_badge_uses_css_dot_not_colored_glyph() -> None:
         assert re.search(selector, css), f"manager.css 缺少徽标样式：{selector}"
 
 
-def test_avatars_show_initial_instead_of_emoji() -> None:
-    """人脸头像改为名字首字，不再是 emoji。"""
-    js = _read_ui_source("manager.js")
-    assert "avatar-initial" in js, "人脸卡片头像未改为名字首字"
-    assert "avatarInitial(" in js, "缺少取名字首字的函数"
+def test_stats_section_is_removed_entirely() -> None:
+    """统计卡片整块已按需求删除，只保留标题 div 与人脸列表。
 
-    css = _read_ui_source("manager.css")
-    assert re.search(r"\.avatar-initial\s*\{", css), "manager.css 缺少 .avatar-initial"
+    需求原文：「把显示注册人脸数和在线数的那个div直接删了，只留标题 div和列表」。
 
-    # 已被取代的旧类不应再出现
-    for stale_class in (".avatar-placeholder", ".empty-icon"):
-        assert stale_class not in css, f"manager.css 仍残留已废弃的 {stale_class}"
-
-
-def test_stats_cards_have_no_icon_div() -> None:
-    """统计卡片的图标 div 已按需求整个删除。
-
-    需求原文：「把人脸和在线人数 那个人和在那个div整个删了」。
-    因此 HTML 里不得再有 ``.stat-icon`` 元素，
-    CSS 里也不得留下没人用的 ``.stat-icon`` / ``.stat-icon-online`` 规则。
+    因此 HTML 里不得再有 ``.stats-grid`` / ``.stat-card`` 及其数字元素，
+    CSS 里也不得留下没人引用的统计样式（包括媒体查询里的孤儿规则）。
     """
     html = _read_ui_source("manager.html")
-    assert "stat-icon" not in html, "统计卡片里仍残留图标 div"
-    assert "stat-icon-online" not in html, "统计卡片里仍残留在线图标 div"
 
-    # 文字内容必须保留 —— 只删图标，不删数据
-    assert 'id="totalCount"' in html, "「已注册人脸」数字丢失"
-    assert 'id="onlineCount"' in html, "「当前在线」数字丢失"
-    assert "已注册人脸" in html, "「已注册人脸」标签丢失"
-    assert "当前在线" in html, "「当前在线」标签丢失"
+    for token in ("stats-grid", "stat-card", "stat-info", "stat-icon",
+                  "totalCount", "onlineCount", "已注册人脸", "当前在线"):
+        assert token not in html, f"统计区域仍残留：{token}"
+
+    # 「只留标题 div 和列表」—— 这两块必须还在
+    assert '<div class="faces-container">' in html, "人脸列表容器丢失"
+    assert 'class="faces-header"' in html, "列表标题 div 丢失"
+    assert "<h3>人脸列表</h3>" in html, "列表标题文字丢失"
+    assert 'id="facesGrid"' in html, "人脸列表网格丢失"
+    assert 'id="facesCount"' in html, "列表条数丢失"
 
     css = _read_ui_source("manager.css")
-    assert not re.search(r"\.stat-icon\s*\{", css), "CSS 里仍残留 .stat-icon 规则"
-    assert not re.search(r"\.stat-icon-online\s*\{", css), "CSS 里仍残留 .stat-icon-online 规则"
-
-    # 统计卡片本身仍要有样式（不能连卡片一起删了）
-    for selector in (r"\.stats-grid\s*\{", r"\.stat-card\s*\{", r"\.stat-info\s*\{",
-                     r"\.stat-value\s*\{", r"\.stat-label\s*\{"):
-        assert re.search(selector, css), f"manager.css 缺少统计卡片样式：{selector}"
+    for selector in ("stats-grid", "stat-card", "stat-info", "stat-value", "stat-label"):
+        assert selector not in css, f"manager.css 仍残留孤儿统计样式：{selector}"
 
 
-def test_stats_groups_are_separated_without_icons() -> None:
-    """图标 div 删掉后，两组数字必须有间距，不能挤在一起。
+def test_removed_stats_ids_are_accessed_safely() -> None:
+    """被删除元素的 id 不得再被无条件访问。
 
-    原先的间距来自图标 div 的宽度；图标移除后如果不补间距，
-    「已注册人脸」与「当前在线」会贴在一起。
+    回归风险：``manager.js`` 原先是
+    ``document.getElementById('totalCount').innerText = ...``，
+    元素一旦删除就会因 null 抛错，并且**中断后面的渲染逻辑**
+    （表现为列表一直显示"加载中…"）。
     """
+    js = _read_ui_source("manager.js")
+
+    # 用正则找出对这些 id 的直接点号访问（没有 if 包裹、也没有可选链）
+    for element_id in ("totalCount", "onlineCount"):
+        dangerous = re.findall(
+            r"getElementById\(['\"]" + element_id + r"['\"]\)\s*\.\s*\w+",
+            js,
+        )
+        assert not dangerous, (
+            f"仍有无保护的 getElementById('{element_id}').… 调用：{dangerous}"
+        )
+
+    # 必须走安全包装
+    assert "function setTextIfPresent" in js, "缺少 setTextIfPresent 安全包装"
+
+
+def test_face_card_avatar_is_blank() -> None:
+    """人脸卡片的紫色头像已删除，换成空白。
+
+    需求原文：「把那个紫色头像给删了，直接换成空白」。
+
+    原先那个紫色渐变圆形头像（``.face-avatar`` + 名字首字）不应再存在，
+    也不能留下它的样式或取首字的死代码。
+    """
+    js = _read_ui_source("manager.js")
+    assert "face-avatar-blank" in js, "头像位置未改为空白占位"
+    assert "avatar-initial" not in js, "仍在使用已删除的头像首字类"
+    assert "avatarInitial" not in js, "仍残留取名字首字的死代码"
+
     css = _read_ui_source("manager.css")
-    match = re.search(r"\.stat-info\s*\{([^}]*)\}", css)
-    assert match, "未找到 .stat-info 规则"
-    body = match.group(1)
-    assert "margin-right" in body, "图标删除后未给 .stat-info 补间距"
-    assert re.search(r"\.stat-info:last-child\s*\{", css), (
-        "缺少 :last-child 归零，末尾会多出一段空白"
+    assert ".face-avatar-blank" in css, "manager.css 缺少空白占位样式"
+    # 紫色圆形头像的规则必须删掉
+    assert not re.search(r"\.face-avatar\s*\{", css), "CSS 里仍残留 .face-avatar 规则"
+    assert not re.search(r"\.avatar-initial\s*\{", css), "CSS 里仍残留 .avatar-initial 规则"
+
+    # 空格缩进改由 .face-details 承担，保证两行文字对齐
+    match = re.search(r"\.face-details\s*\{([^}]*)\}", css)
+    assert match, "未找到 .face-details 规则"
+    assert "padding-left" in match.group(1), (
+        "头像删除后未用 padding-left 保持两行文字对齐"
     )
 
 
-def test_avatar_initial_handles_edge_cases() -> None:
-    """首字提取必须处理空值，且不能把代理对字符截成半个。
+def test_sidebar_logo_gradient_survives_avatar_removal() -> None:
+    """删头像时不要误伤侧边栏 logo —— 它也用同一个紫色渐变。
 
-    直接跑 JS 逻辑的等价实现，锁定行为：
-    ``Array.from(str)`` 按码点切分，``charAt`` 会切坏代理对。
+    这是一条"反向"保护：删除与头像共享配色的规则时，
+    很容易连 logo 的样式一起删掉。
     """
-    # 与 manager.js 里 avatarInitial 等价的 Python 实现
-    def avatar_initial(name):
-        chars = list(str("" if name is None else name).strip())
-        return chars[0] if chars else "?"
-
-    assert avatar_initial("许") == "许"
-    assert avatar_initial("浩 浩") == "浩"
-    assert avatar_initial("") == "?"
-    assert avatar_initial(None) == "?"
-    assert avatar_initial("   ") == "?"
-    # 超出 BMP 的字符（代理对）必须完整保留
-    assert avatar_initial("\U0001F600") == "\U0001F600"
-    assert len(avatar_initial("\U0001F600")) == 1
+    css = _read_ui_source("manager.css")
+    for selector in (r"\.logo-icon\s*\{", r"\.logo-text\s*\{"):
+        assert re.search(selector, css), f"侧边栏 logo 样式被误删：{selector}"
+    # 渐变配色确实还在（logo 在用）
+    assert "#4a90e2 0%, #f06292" in css, "侧边栏 logo 的渐变配色被误删"
 

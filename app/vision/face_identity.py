@@ -56,8 +56,39 @@ LEGACY_PICKLE_PREFIXES = (b"\x80", b"c", b"(")  # pickle protocol 2+ / 0 / 0
 #: 当前特征算法标识，便于排查「注册版本 vs 识别版本」不一致
 IDENTITY_ALGORITHM = "landmark-distance-v2"
 
-#: MediaPipe FaceMesh 关键点数量
+# --------------------------------------------------------------------------- #
+# 关键点数量
+# --------------------------------------------------------------------------- #
+#
+# MediaPipe FaceMesh 在同一张人脸上返回的点数取决于``refine_landmarks``：
+#
+#     refine_landmarks=False -> 468 点（面部网格）
+#     refine_landmarks=True  -> 478 点（468 面部网格 + 末 10 个虹膜点）
+#
+# 本项目在 ``LandmarkDistanceEmbedder`` 中开启了 refine_landmarks
+# （为了更高的关键点定位精度），因此**实际会拿到 478 点**。
+#
+# 关键设计决定：只取前 468 个面部网格点，**丢弃虹膜点**。
+#
+# 为什么必须钉死维度，而不能让特征维度跟着点数走：
+#   特征矩阵是 ``点 × 点`` 的距离矩阵，维度直接等于点数。
+#   若新注册得到 478×478、而库里已有 468×468，两者无法比对；
+#   更糟的是 ``_recognize`` 对维度不一致是**跳过**该条记录，
+#   于是识别会静默失效（界面只显示"陌生人"，没有任何报错）。
+#   钉死 468 后，新旧特征始终可比，不需要重新注册任何人脸。
+#
+# 为什么丢虹膜而不是保留：虹膜点只提供 10 个额外采样，对面部形状区分度
+# 贡献极小（身份主要来自面部几何），却会把维度从 468 拉到 478。取前 468
+# 恰好等价于经典的 face mesh 输出。
+
+#: 面部网格关键点数（也是特征矩阵的固定维度）
 LANDMARK_COUNT = 468
+
+#: 开启 refine_landmarks 时的总点数（多出的 10 个为虹膜点）
+REFINED_LANDMARK_COUNT = 478
+
+#: 可接受的点数集合。超出该集合说明 mediapipe 行为变化，需要重新评估算法。
+ACCEPTED_LANDMARK_COUNTS = (LANDMARK_COUNT, REFINED_LANDMARK_COUNT)
 
 
 class StoredFeatureError(ValueError):
@@ -204,8 +235,34 @@ class LandmarkDistanceEmbedder:
                 pass
 
     # -------- 特征 --------
-    def extract_landmarks(self, image: np.ndarray) -> np.ndarray:
-        """返回 (468, 3) 归一化关键点；未检出人脸时抛 ``FaceQualityError``。"""
+    @staticmethod
+    def normalize_landmarks(landmarks: Any) -> np.ndarray:
+        """把 mediapipe 关键点转成 **(468, 3)** 坐标数组。
+
+        无论模型返回 468 还是 478 点，都只取前 ``LANDMARK_COUNT`` 个面部
+        网格点，丢弃末尾的虹膜点 —— 详见文件顶部关于维度必须钉死的说明。
+        """
+        points = np.asarray(
+            [[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float64
+        )
+
+        count = points.shape[0]
+        if count not in ACCEPTED_LANDMARK_COUNTS:
+            # 点数既不是 468 也不是 478，说明 mediapipe 行为已变化。
+            # 此时**不能**盲目截断或补零，会得到无意义的特征，必须显式报错。
+            raise FaceQualityError(
+                f"关键点数量异常：期望 {LANDMARK_COUNT}（面部网格）"
+                f"或 {REFINED_LANDMARK_COUNT}（含虹膜细化），实际 {count}。"
+                "若 mediapipe 版本已升级，请重新核对特征算法与 RECOGNIZE_THRESHOLD。",
+                code="unexpected_landmark_count",
+                details={"expected": list(ACCEPTED_LANDMARK_COUNTS), "actual": int(count)},
+            )
+
+        # 478 -> 468：丢弃末尾 10 个虹膜点，保证特征维度恒定
+        return points[:LANDMARK_COUNT]
+
+    def _detect_landmarks(self, image: np.ndarray) -> list[np.ndarray]:
+        """检测并返回图中每张脸的 (468, 3) 坐标。"""
         if image is None or image.size == 0:
             raise FaceQualityError("图像为空")
 
@@ -219,13 +276,14 @@ class LandmarkDistanceEmbedder:
         if not results.multi_face_landmarks:
             raise FaceQualityError("未检测到人脸")
 
-        landmarks = results.multi_face_landmarks[0].landmark
-        points = np.asarray([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float64)
-        if points.shape[0] != LANDMARK_COUNT:
-            raise FaceQualityError(
-                f"关键点数量异常：期望 {LANDMARK_COUNT}，实际 {points.shape[0]}"
-            )
-        return points
+        return [
+            self.normalize_landmarks(face.landmark)
+            for face in results.multi_face_landmarks
+        ]
+
+    def extract_landmarks(self, image: np.ndarray) -> np.ndarray:
+        """返回 (468, 3) 归一化坐标；未检出人脸时抛 ``FaceQualityError``。"""
+        return self._detect_landmarks(image)[0]
 
     def extract(self, image: np.ndarray) -> np.ndarray:
         points = self.extract_landmarks(image)
@@ -233,27 +291,10 @@ class LandmarkDistanceEmbedder:
 
     def extract_many(self, image: np.ndarray) -> list[np.ndarray]:
         """一张图里可能有多张脸，返回所有特征。"""
-        if image is None or image.size == 0:
-            raise FaceQualityError("图像为空")
-
-        mesh = self._ensure_mesh()
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        with inference_lock:
-            results = mesh.process(rgb)
-        if not results.multi_face_landmarks:
-            raise FaceQualityError("未检测到人脸")
-
-        out: list[np.ndarray] = []
-        for face_landmarks in results.multi_face_landmarks:
-            points = np.asarray(
-                [[lm.x, lm.y, lm.z] for lm in face_landmarks.landmark], dtype=np.float64
-            )
-            if points.shape[0] != LANDMARK_COUNT:
-                continue
-            out.append(pairwise_distance_matrix(spatial_normalize(points)))
-        if not out:
-            raise FaceQualityError("未检测到有效人脸")
-        return out
+        return [
+            pairwise_distance_matrix(spatial_normalize(points))
+            for points in self._detect_landmarks(image)
+        ]
 
     def compare(self, left: np.ndarray, right: np.ndarray) -> float:
         return similarity_from_matrices(left, right)
@@ -277,11 +318,13 @@ def set_embedder(embedder: IdentityEmbedder | None) -> None:
 
 
 __all__ = [
+    "ACCEPTED_LANDMARK_COUNTS",
     "FEATURE_MAGIC",
     "IDENTITY_ALGORITHM",
     "LANDMARK_COUNT",
     "LandmarkDistanceEmbedder",
     "MatchResult",
+    "REFINED_LANDMARK_COUNT",
     "StoredFeatureError",
     "deserialize_features",
     "get_embedder",

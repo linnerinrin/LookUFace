@@ -265,14 +265,30 @@ class FaceAnalysisService:
 
         threshold = settings.RECOGNIZE_THRESHOLD
         best_name, best_score = UNKNOWN, 0.0
+        mismatched: list[str] = []
         for name, matrix in known:
             try:
                 score = embedder.compare(probe, matrix)
             except ValueError:
-                # 维度不一致（不同算法版本），跳过而不是崩溃
+                # 维度不一致（不同算法版本）时跳过而不是崩溃。
+                #
+                # 注意：这里是**静默跳过** —— 调用方只会看到「陌生人」，
+                # 不会有任何报错。正因如此，特征维度必须保持不变
+                # （见 app/vision/face_identity.py 中关于 468/478 的说明）：
+                # 一旦新旧特征维度不同，识别会无声失效而很难被发现。
+                mismatched.append(f"{name}({matrix.shape[0]})")
                 continue
             if score > best_score:
                 best_name, best_score = name, score
+
+        if mismatched:
+            logger.warning(
+                "有 %d 条人脸特征维度与当前算法不一致，已跳过（这些脸无法被识别，"
+                "请重新注册）：%s；当前特征维度=%d",
+                len(mismatched),
+                ", ".join(mismatched),
+                probe.shape[0],
+            )
 
         if best_score < threshold:
             best_name = UNKNOWN

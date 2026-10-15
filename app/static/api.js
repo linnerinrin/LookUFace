@@ -111,6 +111,170 @@
     }
     ApiError.prototype = Object.create(Error.prototype);
 
+    // ------------------------------------------------------------------ //
+    // 网络层失败的诊断
+    // ------------------------------------------------------------------ //
+
+    /**
+     * fetch 在 HTTP 层面失败时抛出的错误。
+     *
+     * 浏览器原文（"Failed to fetch" / "NetworkError..."）无法区分下面几种完全
+     * 不同的原因，而它们的处理方式截然相反：
+     *   1. 服务没启动 / 地址或端口不对
+     *   2. 浏览器代理指向了一个不可用的代理（本机实测过这种情况）
+     *   3. CORS 预检被拒（访问地址的 Origin 不在服务端白名单）
+     *   4. 服务端崩溃或连接被重置
+     * 因此这里在失败时立刻对同源的 /health 做一次探测，把结论写进 hint。
+     */
+    function NetworkError(cause, url) {
+        this.name = 'NetworkError';
+        this.cause = cause;
+        this.url = url;
+        this.status = 0;
+        this.code = 'network_error';
+        this.hint = '无法连接服务器。';
+        this.message = '无法连接服务器（' + (cause && cause.message ? cause.message : '未知网络错误') + '）';
+    }
+    NetworkError.prototype = Object.create(Error.prototype);
+
+    /** 探测同源连通性，返回面向用户的诊断结论。 */
+    function diagnoseConnectivity() {
+        var healthUrl = BASE + '/health';
+
+        if (window.location.protocol === 'file:') {
+            return Promise.resolve(
+                '页面是用 file:// 直接打开的，这样所有 /api/... 请求都会指向本地文件系统，' +
+                '必然失败。请先运行 start.bat，再访问 http://127.0.0.1:8000/static/idx.html'
+            );
+        }
+
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var timer = setTimeout(function () {
+            if (controller) controller.abort();
+        }, 4000);
+
+        return window.fetch(healthUrl, {
+            method: 'GET',
+            cache: 'no-store',
+            // 加一个非简单头，强制走预检，从而也能验证 CORS 是否放行
+            headers: { 'X-Requested-With': 'LookUFace-Diag' },
+            signal: controller ? controller.signal : undefined
+        }).then(function (response) {
+            clearTimeout(timer);
+            if (response.ok) {
+                return '服务器可达且 CORS 放行，但该接口仍然失败，请查看服务端日志。';
+            }
+            return '服务器可达但返回 HTTP ' + response.status + '，请查看服务端日志。';
+        }).catch(function (probeError) {
+            clearTimeout(timer);
+            var origin = window.location.origin;
+            var aborted = probeError && probeError.name === 'AbortError';
+
+            var lines = [];
+            lines.push('服务器无法访问：' + healthUrl);
+            lines.push('页面来源（Origin）：' + (origin === 'null' ? 'null（file:// 打开）' : origin));
+            lines.push('异常：' + (probeError && probeError.message ? probeError.message : String(probeError)));
+
+            if (aborted) {
+                lines.push('结论：连接被挂起直至超时。这是「浏览器配置了代理、但代理不可用」的典型特征。');
+            } else {
+                lines.push('结论：连接被立即拒绝。通常是服务未启动，或代理拒绝了该请求。');
+            }
+
+            lines.push('');
+            lines.push('请依次检查：');
+            lines.push('  1. 服务是否在运行：在项目目录执行 start.bat，确认窗口没有闪退');
+            lines.push('  2. 浏览器代理：若系统代理指向一个没有在运行的程序（例如 127.0.0.1:7890），');
+            lines.push('     请关闭代理（Windows 设置 → 网络和 Internet → 代理 → 关闭「使用代理服务器」）');
+            lines.push('  3. 访问方式：请使用 http://127.0.0.1:8000/static/idx.html，');
+            lines.push('     不要用 file:// 打开页面，也不要用 192.168.x.x / 机器名访问');
+            lines.push('     （服务端 ALLOWED_ORIGINS 只允许 127.0.0.1 与 localhost）');
+
+            return lines.join('\n');
+        });
+    }
+
+    /** 把诊断结论附加到错误对象上（供提示框展示）。 */
+    function attachDiagnosis(err) {
+        if (!(err instanceof NetworkError)) return Promise.resolve(err);
+        return diagnoseConnectivity().then(function (hint) {
+            err.hint = hint;
+            err.message = '无法连接服务器\n\n' + hint;
+            return err;
+        });
+    }
+
+    /**
+     * 公开的连通性探测，供页面上的「重新检测」按钮调用。
+     *
+     * 复用 diagnoseConnectivity 而不去请求业务接口 —— 后者在服务不可达时
+     * 同样只会 reject，徒增一次失败。
+     */
+    function probeConnectivity() {
+        return diagnoseConnectivity();
+    }
+
+    /** 服务不可达时在页面顶部显示一条可复制的诊断横幅。 */
+    var _diagBannerId = 'lfConnDiag';
+
+    function showConnectivityBanner(hint) {
+        if (typeof document === 'undefined' || !document.body) return;
+
+        var el = document.getElementById(_diagBannerId);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = _diagBannerId;
+            el.setAttribute('role', 'alert');
+            el.style.cssText = [
+                'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:2147483646',
+                'background:#b71c1c', 'color:#fff', 'padding:14px 18px',
+                'font-size:13px', 'line-height:1.6', 'white-space:pre-line',
+                'max-height:60vh', 'overflow:auto', 'text-align:left',
+                'box-shadow:0 4px 16px rgba(0,0,0,0.3)'
+            ].join(';');
+
+            var button = document.createElement('button');
+            button.textContent = '重新检测';
+            button.style.cssText = [
+                'margin-top:10px', 'margin-right:10px', 'padding:6px 14px',
+                'border:none', 'border-radius:6px', 'cursor:pointer',
+                'background:#fff', 'color:#b71c1c', 'font-weight:600'
+            ].join(';');
+            button.onclick = function () {
+                button.disabled = true;
+                button.textContent = '检测中…';
+                probeConnectivity().then(function (text) {
+                    var body = document.getElementById(_diagBannerId + '-text');
+                    if (body) body.textContent = text;
+                    button.disabled = false;
+                    button.textContent = '重新检测';
+                });
+            };
+
+            var close = document.createElement('button');
+            close.textContent = '关闭';
+            close.style.cssText = button.style.cssText;
+            close.onclick = function () { hideConnectivityBanner(); };
+
+            var body = document.createElement('div');
+            body.id = _diagBannerId + '-text';
+            body.textContent = hint;
+
+            el.appendChild(body);
+            el.appendChild(button);
+            el.appendChild(close);
+            document.body.appendChild(el);
+        } else {
+            var existing = document.getElementById(_diagBannerId + '-text');
+            if (existing) existing.textContent = hint;
+        }
+    }
+
+    function hideConnectivityBanner() {
+        var el = document.getElementById(_diagBannerId);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
     /**
      * 统一请求。
      * @param {string} path   形如 '/faces' 或 '/sessions/checkin'
@@ -165,12 +329,29 @@
                 }
                 throw new ApiError(message, response.status, data && data.code, data && data.details);
             });
+        }).catch(function (err) {
+            // 网络层失败：fetch 直接 reject，浏览器只给一句
+            // "Failed to fetch" / "NetworkError when attempting to fetch resource"。
+            // 这句话对用户毫无帮助，因此这里补一次连通性探测，给出可操作的结论。
+            if (err instanceof ApiError) throw err;   // 业务错误原样抛出
+
+            return attachDiagnosis(new NetworkError(err, url)).then(function (netErr) {
+                // 除了角标提示，再显示一条可复制、可重试的完整诊断横幅 ——
+                // 否则用户只会看到 "Failed to fetch" 这一句无从下手的话。
+                try { showConnectivityBanner(netErr.hint); } catch (e) { /* ignore */ }
+                throw netErr;
+            });
         });
     }
 
     var api = {
         BASE: BASE,
         ApiError: ApiError,
+        NetworkError: NetworkError,
+        diagnoseConnectivity: diagnoseConnectivity,
+        probe: probeConnectivity,
+        showConnectivityBanner: showConnectivityBanner,
+        hideConnectivityBanner: hideConnectivityBanner,
         request: request,
         get: function (path, opts) { return request(path, Object.assign({ method: 'GET' }, opts)); },
         post: function (path, body, opts) { return request(path, Object.assign({ method: 'POST', body: body }, opts)); },
@@ -203,12 +384,16 @@
                 'font-weight:500', 'z-index:2147483647', 'max-width:80vw',
                 'box-shadow:0 6px 24px rgba(0,0,0,0.18)',
                 'opacity:0', 'transition:opacity .18s ease, transform .18s ease',
-                'pointer-events:none', 'word-break:break-word'
+                'pointer-events:none', 'word-break:break-word',
+                // 诊断信息是多行的，需要保留换行
+                'white-space:pre-line', 'text-align:left',
+                'max-height:70vh', 'overflow:auto'
             ].join(';');
             document.body.appendChild(el);
         }
         el.style.background = isError === false ? '#2e7d32' : '#c62828';
         el.style.color = '#fff';
+        // 用 textContent 赋值，避免任何注入风险
         el.textContent = message;
         // 强制重排以便重复调用也有动画
         void el.offsetWidth;
@@ -216,10 +401,15 @@
         el.style.transform = 'translateX(-50%) translateY(0)';
 
         clearTimeout(el._lfTimer);
+        // 内容越长停留越久（最多 20 秒），避免长诊断信息来不及看
+        var text = String(message == null ? '' : message);
+        var duration = text.length > 120
+            ? Math.min(20000, 6000 + text.length * 30)
+            : 3200;
         el._lfTimer = setTimeout(function () {
             el.style.opacity = '0';
             el.style.transform = 'translateX(-50%) translateY(-8px)';
-        }, 3200);
+        }, duration);
     }
 
     // ------------------------------------------------------------------ //

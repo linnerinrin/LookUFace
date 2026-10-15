@@ -105,3 +105,117 @@ def test_body_size_limit_rejects_early(anon_client) -> None:
     )
     assert response.status_code == 413
     assert response.json()["code"] == "payload_too_large"
+
+
+# --------------------------------------------------------------------------- #
+# CORS / 跨源（对应用户遇到的 "Failed to fetch"）
+# --------------------------------------------------------------------------- #
+
+
+def test_cors_preflight_allows_whitelisted_origin_with_requested_with(anon_client) -> None:
+    """白名单 Origin 的预检必须放行，且要允许 X-Requested-With。
+
+    前端连通性探测（api.js 的 diagnoseConnectivity）会带这个头。
+    如果它不在 allow_headers 里，探测自身的预检就会失败，
+    进而把「CORS 正常」误判成「CORS 被拒」。
+    """
+    response = anon_client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": "http://127.0.0.1:8000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "x-requested-with",
+        },
+    )
+    assert response.status_code == 200
+    allow_headers = response.headers.get("access-control-allow-headers", "").lower()
+    assert "x-requested-with" in allow_headers
+    assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:8000"
+
+
+def test_cors_preflight_rejects_unlisted_origin(anon_client) -> None:
+    """不在白名单的 Origin 必须被拒 —— 浏览器端表现为 "Failed to fetch"。
+
+    这正是用户遇到的现象来源之一：用 192.168.x.x 或机器名访问时，
+    Origin 不在 ALLOWED_ORIGINS 内，页面能加载但所有 API 调用都会失败。
+    """
+    response = anon_client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": "http://192.168.2.102:8000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 400
+    assert response.headers.get("access-control-allow-origin") is None
+
+
+def _capture_app_logs():
+    """把应用 logger 的记录收集到列表里。
+
+    不能直接用 pytest 的 ``caplog``：应用 logger 设了 ``propagate = False``，
+    记录不会冒泡到 root logger，因此 caplog 的 handler 收不到。
+    """
+    import logging
+    from contextlib import contextmanager
+
+    from app.logger import logger as app_logger
+
+    @contextmanager
+    def _ctx():
+        messages: list[str] = []
+
+        class _Handler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                try:
+                    messages.append(record.getMessage())
+                except Exception:  # pragma: no cover
+                    pass
+
+        handler = _Handler()
+        handler.setLevel(logging.DEBUG)
+        app_logger.addHandler(handler)
+        previous_level = app_logger.level
+        app_logger.setLevel(logging.DEBUG)
+        try:
+            yield messages
+        finally:
+            app_logger.setLevel(previous_level)
+            app_logger.removeHandler(handler)
+
+    return _ctx()
+
+
+def test_rejected_origin_is_logged_with_actionable_message(anon_client) -> None:
+    """跨源被拒时必须留下可定位的告警。
+
+    用户只看浏览器只会看到 "Failed to fetch"，所以服务端必须把
+    「Origin 不在白名单」这个结论直接写进日志。
+    """
+    with _capture_app_logs() as messages:
+        anon_client.post(
+            "/api/v1/auth/login",
+            json={"email": "a@b.c", "password": "x"},
+            headers={"Origin": "http://192.168.2.102:8000"},
+        )
+
+    joined = "\n".join(messages)
+    assert "跨源请求被拒绝" in joined, f"缺少跨源告警，实际日志：\n{joined}"
+    assert "192.168.2.102:8000" in joined
+    assert "ALLOWED_ORIGINS" in joined
+
+
+def test_same_origin_request_is_not_flagged_as_cross_origin(anon_client) -> None:
+    """同源请求不应告警，即使该地址不在 ALLOWED_ORIGINS 里。
+
+    浏览器访问 http://192.168.2.102:8000 时，页面对同源 API 的请求
+    不会触发 CORS 检查，因此不应产生噪声告警。
+    """
+    with _capture_app_logs() as messages:
+        anon_client.get(
+            "/api/v1/health",
+            headers={"Origin": "http://testserver", "Host": "testserver"},
+        )
+
+    joined = "\n".join(messages)
+    assert "跨源请求被拒绝" not in joined, f"同源请求被误报：\n{joined}"

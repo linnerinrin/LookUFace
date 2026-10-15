@@ -220,6 +220,7 @@ async function handleLogin() {
         if (err.status === 401) {
             showTip('邮箱或密码错误', true);
         } else {
+            // 网络层失败时 err.message 已包含完整诊断（见 api.js 的 NetworkError）
             showTip(err.message || '登录失败，请稍后重试', true);
         }
         LF.log.warn('登录失败: ' + (err.message || err));

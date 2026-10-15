@@ -125,7 +125,9 @@ def create_app() -> FastAPI:
         allow_origins=settings.allowed_origins_list,
         allow_credentials=settings.cors_allow_credentials,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        # X-Requested-With 是前端连通性探测（api.js 的 diagnoseConnectivity）使用的头。
+        # 遗漏它会让该探测的预检失败，从而把「CORS 正常」误判为「CORS 被拒」。
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],
         expose_headers=["X-Request-ID", "X-Process-Time-ms"],
         max_age=600,
     )

@@ -376,3 +376,160 @@ function window_listener(listeners, type, fn) {
   if (!listeners.has(type)) listeners.set(type, []);
   listeners.get(type).push(fn);
 }
+
+describe('网络层失败诊断（Failed to fetch 的归因）', () => {
+  test('fetch 网络失败时抛出 NetworkError 而不是裸 TypeError', async () => {
+    // 模拟浏览器在无法建立连接时抛出的错误
+    const fetchImpl = () => Promise.reject(new TypeError('Failed to fetch'));
+    const { LF } = loadApi({ fetchImpl });
+
+    await assert.rejects(
+      () => LF.api.post('/auth/login', { email: 'a@b.c', password: 'x' }),
+      (err) => {
+        assert.equal(err.name, 'NetworkError');
+        assert.equal(err.status, 0);
+        assert.equal(err.code, 'network_error');
+        assert.ok(err.message.includes('无法连接服务器'), `实际信息: ${err.message}`);
+        return true;
+      },
+    );
+  });
+
+  test('诊断信息会指出服务不可达、页面来源与访问方式', async () => {
+    const fetchImpl = () => Promise.reject(new TypeError('Failed to fetch'));
+    const { LF } = loadApi({ fetchImpl });
+
+    await assert.rejects(() => LF.api.post('/auth/send-code', {}), (err) => {
+      assert.ok(err.hint, '应有 hint');
+      assert.ok(err.hint.includes('/api/v1/health'), '应给出探测地址');
+      assert.ok(err.hint.includes('start.bat'), '应提示启动服务');
+      assert.ok(err.hint.includes('代理'), '应提示检查代理');
+      assert.ok(err.hint.includes('127.0.0.1'), '应提示正确的访问地址');
+      return true;
+    });
+  });
+
+  test('业务错误（ApiError）不会被误判为网络错误', async () => {
+    const fetchImpl = stubFetch([
+      { status: 401, body: '{"detail":"邮箱或密码错误","code":"unauthorized"}' },
+    ]);
+    const { LF } = loadApi({ fetchImpl });
+
+    await assert.rejects(
+      () => LF.api.post('/auth/login', {}, { skipAuthRedirect: true }),
+      (err) => {
+        assert.equal(err.name, 'ApiError', '必须保留 ApiError 类型');
+        assert.equal(err.status, 401);
+        return true;
+      },
+    );
+  });
+
+  test('超时（AbortError）被识别为「连接被挂起」，指向代理问题', async () => {
+    const abortError = new Error('The operation was aborted.');
+    abortError.name = 'AbortError';
+    // 业务请求与探测请求都超时
+    const fetchImpl = () => Promise.reject(abortError);
+    const { LF } = loadApi({ fetchImpl });
+
+    await assert.rejects(() => LF.api.get('/faces'), (err) => {
+      assert.equal(err.name, 'NetworkError');
+      assert.ok(err.hint.includes('超时'), `实际: ${err.hint}`);
+      assert.ok(err.hint.includes('代理'), '超时应指向代理配置问题');
+      return true;
+    });
+  });
+
+  test('file:// 打开页面时给出针对性提示', async () => {
+    const fetchImpl = () => Promise.reject(new TypeError('Failed to fetch'));
+    const { LF, windowStub } = loadApi({ fetchImpl });
+    windowStub.location.protocol = 'file:';
+    windowStub.location.origin = 'null';
+
+    await assert.rejects(() => LF.api.get('/health'), (err) => {
+      assert.ok(err.hint.includes('file://'), `实际: ${err.hint}`);
+      assert.ok(err.hint.includes('start.bat'));
+      return true;
+    });
+  });
+
+  test('服务可达但返回错误状态时，诊断说明「可达」而非「不可达」', async () => {
+    // 业务请求失败，但探测请求返回 200
+    let call = 0;
+    const fetchImpl = () => {
+      call += 1;
+      if (call === 1) return Promise.reject(new TypeError('Failed to fetch'));
+      return Promise.resolve({
+        ok: true, status: 200,
+        text: () => Promise.resolve('{}'),
+      });
+    };
+    const { LF } = loadApi({ fetchImpl });
+
+    await assert.rejects(() => LF.api.get('/faces'), (err) => {
+      assert.ok(err.hint.includes('可达'), `实际: ${err.hint}`);
+      return true;
+    });
+  });
+
+  test('probe() 可单独调用（供「重新检测」按钮使用）', async () => {
+    const fetchImpl = () => Promise.resolve({
+      ok: true, status: 200, text: () => Promise.resolve('{}'),
+    });
+    const { LF } = loadApi({ fetchImpl });
+
+    const text = await LF.api.probe();
+    assert.ok(typeof text === 'string');
+    assert.ok(text.includes('可达'), `实际: ${text}`);
+  });
+
+  test('NetworkError 与 ApiError 都被导出', () => {
+    const { LF } = loadApi();
+    assert.equal(typeof LF.api.NetworkError, 'function');
+    assert.equal(typeof LF.api.ApiError, 'function');
+    assert.equal(typeof LF.api.showConnectivityBanner, 'function');
+    assert.equal(typeof LF.api.hideConnectivityBanner, 'function');
+  });
+});
+
+describe('toast 对长诊断信息的处理', () => {
+  test('保留换行并延长显示时间', () => {
+    const created = [];
+    const container = { children: [], appendChild(n) { this.children.push(n); } };
+    const doc = {
+      body: container,
+      createElement: () => {
+        const el = { style: {}, setAttribute() {}, appendChild() {} };
+        created.push(el);
+        return el;
+      },
+      getElementById: () => (container.children.length ? container.children[0] : null),
+      addEventListener() {},
+    };
+    const ctx = {
+      window: {
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{}') }),
+        addEventListener() {}, dispatchEvent() {},
+        location: { pathname: '/static/idx.html', protocol: 'http:', origin: 'http://x' },
+      },
+      document: doc,
+      console, JSON, Object, Array, String, Error, Promise, Symbol,
+      setTimeout, clearTimeout, encodeURIComponent,
+      CustomEvent: class {}, StorageEvent: class {},
+    };
+    ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    vm.runInContext(readFileSync(API_JS, 'utf8'), ctx, { filename: 'api.js' });
+
+    const longText = '无法连接服务器\n第二行\n第三行';
+    ctx.window.LookUFace.toast(longText, true);
+
+    assert.equal(created.length, 1);
+    assert.equal(created[0].textContent, longText, '换行必须保留');
+    assert.ok(
+      created[0].style.cssText.includes('pre-line'),
+      '必须设置 white-space:pre-line，否则换行会被折叠',
+    );
+  });
+});

@@ -1,18 +1,9 @@
-fastapi==0.136.1
-uvicorn==0.24.0
-starlette==1.0.0
-pydantic==2.13.3
-pydantic-settings==2.14.0
-pydantic_core==2.46.3
-email-validator==2.3.0
-python-jose==3.5.0
-passlib==1.7.4
-bcrypt==5.0.0
-opencv-python==4.13.0.92
-numpy==2.4.4
-mediapipe==0.10.9
-scikit-learn==1.8.0
-SQLAlchemy==2.0.23
-python-multipart==0.0.26
-python-dotenv==1.2.2
-qrcode[pil]==7.4.2
+# 依赖声明已统一迁移到 pyproject.toml（[project].dependencies）。
+# 本文件仅为兼容既有部署脚本而保留，请勿再直接编辑。
+#
+# 安装：
+#   pip install -e ".[dev]"        # 开发（含 pytest / ruff / mypy）
+#   pip install .                  # 生产
+#
+# 完整依赖见 pyproject.toml。
+-e .

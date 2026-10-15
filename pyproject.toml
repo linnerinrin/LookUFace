@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lookuface"
+version = "1.1.0"
+description = "LookUFace - 基于人脸识别的场地计时缴费系统"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "LookUFace" }]
+
+# 说明：
+#  - 保留 mediapipe==0.10.9（0.10.9 之后版本未提供 Windows/py3.11 wheel 的稳定组合）
+#  - 显式声明 opencv-contrib-python：mediapipe 运行时依赖它，原 requirements.txt 遗漏
+#  - 移除 bcrypt：passlib 1.7.4 与 bcrypt>=4.1 不兼容（bcrypt.__about__ 已删除），
+#    且本项目密码哈希统一使用 pbkdf2_sha256（见 app/services/security.py）
+dependencies = [
+    "fastapi>=0.115,<0.140",
+    "uvicorn[standard]>=0.24,<0.40",
+    "starlette>=0.40",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.2,<3",
+    "email-validator>=2.1",
+    "python-jose[cryptography]>=3.3",
+    "passlib>=1.7.4,<2",
+    "opencv-python>=4.9",
+    "opencv-contrib-python>=4.9",
+    "numpy>=1.26",
+    "mediapipe==0.10.9",
+    "scikit-learn>=1.4",
+    "SQLAlchemy>=2.0,<3",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0",
+    "qrcode[pil]>=7.4",
+    "aiofiles>=23.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+
+[project.scripts]
+lookuface = "app.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning:passlib.*",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = ["venv", ".venv", "app/static"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["B008"]  # FastAPI 的 Depends(...) 默认参数写法
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
+exclude = ["venv", "app/static"]

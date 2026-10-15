@@ -1,22 +1,74 @@
+# ============================================================================
+# LookUFace 编排
+#
+# 相对旧版的改进：
+#   1. 旧版 .dockerignore 排除了 models/，compose 却挂载 ./models —— 两者策略冲突，
+#      结果镜像里没有模型、只能依赖挂载，而挂载缺失就静默降级。
+#      现在 models 不再被 .dockerignore 排除，且默认挂载为只读。
+#   2. 增加 SQLite 数据文件的持久化与备份目录说明。
+#   3. 增加资源限制与日志轮转，避免日志无限增长撑满磁盘。
+#   4. 健康检查改为调用 /api/v1/health 并检查 status 字段。
+# ============================================================================
+
 services:
   lookuface:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: lookuface:1.1.0
     container_name: lookuface
     restart: unless-stopped
+
     ports:
       - "8000:8000"
+
     env_file:
       - .env
-    volumes:
-      - ./storage:/app/storage
-      - ./logs:/app/logs
-      - ./models:/app/models:ro
     environment:
-      - DATABASE_URL=sqlite:///./storage/face_lens.db
+      # 容器内固定路径，覆盖 .env 里的相对路径
+      DATABASE_URL: "sqlite:////app/storage/face_lens.db"
+      LOG_DIR: "/app/logs"
+      STORAGE_DIR: "/app/storage"
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DEBUG: "False"
+
+    volumes:
+      # 数据库与截图/二维码
+      - ./storage:/app/storage
+      # 日志
+      - ./logs:/app/logs
+      # 模型只读挂载（体积大且不常变）
+      - ./models:/app/models:ro
+
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import json, urllib.request, sys
+          try:
+              with urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=8) as r:
+                  body = json.loads(r.read().decode())
+              sys.exit(0 if body.get('status') == 'healthy' else 1)
+          except Exception:
+              sys.exit(1)
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 40s
 
+    # 摄像头推流是 IO 密集 + 推理是 CPU 密集，给一个合理的上限
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -1,4 +1,6 @@
-// auth.js - 完整的用户认证模块
+// auth.js - 用户认证（登录 / 注册 / 找回密码 / 资料）
+var LF = window.LookUFace;
+// 依赖：api.js（需先引入）。API 基址、请求封装、提示、日志上报均由 api.js 提供。
 
 /*
 *logs 由于各个页面都继承auth.js 于是在这里写了 所有前端控制台输出都走forntlogsload 然后给sendlog
@@ -29,38 +31,17 @@ logout()	登出 清除jwt
 getCurrentUser()	解析user
 */
 
-const API_BASE = '/api/v1' //api端口路径 此处声明一次 其他js都继承auth所以不能重新声明
+// API 基址、请求封装、提示与日志上报均由 api.js 提供。
+// 注意：这里**不能**再写 `const LF = window.LookUFace;` ——
+// manager.js / account.js 也会引用 LF，同页多个 const 声明会触发
+// 'Identifier LF has already been declared' 语法错误，导致脚本整体不执行。
+// 下面的 `LF` 是 api.js 挂到 window 上的全局引用（var 语义，可安全重复引用）。
 let countdownInterval = null; //验证码计时器
 
-//集成logs
-(function FrontLogsLoad() {
-    function sendLog(level, args) {
-        const message = Array.from(args).map(a => {
-            try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
-            catch(e) { return String(a); }
-        }).join(' ');
-
-        const page = window.location.pathname.split('/').pop() || 'unknown';
-
-        fetch(`${API_BASE}/frontend-log`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ level, message, page })
-        }).catch(() => {});
-    }
-
-    const _log = console.log;
-    const _warn = console.warn;
-    const _error = console.error;
-
-    console.log = function(...args) { _log.apply(console, args); sendLog('info', args); };
-    console.warn = function(...args) { _warn.apply(console, args); sendLog('warn', args); };
-    console.error = function(...args) { _error.apply(console, args); sendLog('error', args); };
-
-    window.addEventListener('error', function(e) {
-        sendLog('error', [`${e.message} (${e.filename}:${e.lineno})`]);
-    });
-})();
+// 说明：旧版在这里劫持了 console.log/warn/error 并把**所有**输出上报服务端，
+// 结果页面里任何调试打印都会变成服务端日志噪声（manager.js 的调试输出曾把日志刷满）。
+// 现在改为显式上报：只有 api.js 中的 LookUFace.log.error/warn 会发送，
+// 以及 api.js 里注册的 window error / unhandledrejection 全局兜底。
 
 //初始化
 function initAuth() {
@@ -148,50 +129,10 @@ function validateEmailInput(input) {
 }
 
 // 显示提示消息
+// 旧版自建一个 div 用 3 秒动画提示；现在统一转接 api.js 的 toast，
+// 避免每个页面各写一套提示组件（showTip 的 isError 语义保持一致）。
 function showTip(message, isError = true) {
-    let tipDiv = document.getElementById('globalTip');
-    if (!tipDiv) {
-        tipDiv = document.createElement('div');
-        tipDiv.id = 'globalTip';
-        tipDiv.style.cssText = `
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            z-index: 10000;
-            animation: fadeInOut 3s ease forwards;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        `;
-        document.body.appendChild(tipDiv);
-
-        if (!document.getElementById('tipStyle')) {
-            const style = document.createElement('style');
-            style.id = 'tipStyle';
-            style.textContent = `
-                @keyframes fadeInOut {
-                    0% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
-                    10% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                    90% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                    100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
-                }
-            `;
-            document.head.appendChild(style);
-        }
-    }
-
-    tipDiv.style.background = isError ? '#f44336' : '#4caf50';
-    tipDiv.style.color = 'white';
-    tipDiv.textContent = message;
-
-    setTimeout(() => {
-        if (tipDiv && tipDiv.parentNode) {
-            tipDiv.remove();
-        }
-    }, 3000);
+    LF.toast(message, isError);
 }
 
 // 倒计时
@@ -265,39 +206,23 @@ async function handleLogin() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-        });
-         if (response.status === 401) {
-                showTip('邮箱或密码错误', true);
-                return;
-            }
-        const data = await response.json();
+        const data = await LF.api.post('/auth/login', { email, password }, { skipAuthRedirect: true });
 
-        if (response.ok) {
-            localStorage.setItem('token', data.token);
-            localStorage.setItem('user', JSON.stringify(data.user));
-            updateAuthUI();
-            closeAuthModal();
-            window.dispatchEvent(new StorageEvent('storage', {
-                key: 'token',
-                newValue: data.token,
-                oldValue: null
-            }));
+        LF.auth.setSession(data.token, data.user);
+        updateAuthUI();
+        closeAuthModal();
 
-            const displayName = data.user.nickname || data.user.email.split('@')[0];
-            showTip(`欢迎回来，${displayName}！`, false);
+        showTip(`欢迎回来，${LF.auth.displayName()}！`, false);
 
-            if (typeof updateAccountUI === 'function') updateAccountUI();
-            if (typeof loadFaces === 'function') loadFaces();
-        } else {
-            showTip(data.detail || '登录失败，请检查邮箱和密码', true);
-        }
+        if (typeof updateAccountUI === 'function') updateAccountUI();
+        if (typeof loadFaces === 'function') loadFaces();
     } catch (err) {
-        console.error('登录错误:', err);
-        showTip('网络错误，请稍后重试', true);
+        if (err.status === 401) {
+            showTip('邮箱或密码错误', true);
+        } else {
+            showTip(err.message || '登录失败，请稍后重试', true);
+        }
+        LF.log.warn('登录失败: ' + (err.message || err));
     }
 }
 
@@ -362,25 +287,11 @@ async function sendRegisterCode() {
     btn.textContent = '发送中...';
 
     try {
-        const response = await fetch(`${API_BASE}/auth/send-code`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, type: 'register' })
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            showTip('验证码已发送，请查看后端控制台', false);
-            startCountdown(btn);
-        } else {
-            showTip(data.detail || data.message || '发送失败，请稍后重试', true);
-            btn.disabled = false;
-            btn.textContent = '获取验证码';
-        }
+        const data = await LF.api.post('/auth/send-code', { email, type: 'register' });
+        showTip(data.message || '验证码已发送，请查收邮件', false);
+        startCountdown(btn);
     } catch (err) {
-        console.error('发送验证码错误:', err);
-        showTip('网络错误，请检查后端服务是否运行', true);
+        showTip(err.message || '发送失败，请稍后重试', true);
         btn.disabled = false;
         btn.textContent = '获取验证码';
     }
@@ -424,29 +335,16 @@ async function handleRegister() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/auth/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, nickname, password, code })
-        });
+        const data = await LF.api.post('/auth/register', { email, nickname, password, code });
 
-        const data = await response.json();
+        LF.auth.setSession(data.token, data.user);
+        updateAuthUI();
+        closeAuthModal();
+        showTip(`注册成功！欢迎 ${LF.auth.displayName()}`, false);
 
-        if (response.ok) {
-            localStorage.setItem('token', data.token);
-            localStorage.setItem('user', JSON.stringify(data.user));
-            updateAuthUI();
-            closeAuthModal();
-            const displayName = data.user.nickname || data.user.email.split('@')[0];
-            showTip(`注册成功！欢迎 ${displayName}`, false);
-
-            if (typeof updateAccountUI === 'function') updateAccountUI();
-        } else {
-            showTip(data.detail || '注册失败', true);
-        }
+        if (typeof updateAccountUI === 'function') updateAccountUI();
     } catch (err) {
-        console.error('注册错误:', err);
-        showTip('网络错误，请稍后重试', true);
+        showTip(err.message || '注册失败', true);
     }
 }
 
@@ -506,25 +404,11 @@ async function sendResetCode() {
     btn.textContent = '发送中...';
 
     try {
-        const response = await fetch(`${API_BASE}/auth/send-code`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, type: 'reset' })
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            showTip('验证码已发送，请查看后端控制台', false);
-            startCountdown(btn);
-        } else {
-            showTip(data.detail || data.message || '发送失败，请稍后重试', true);
-            btn.disabled = false;
-            btn.textContent = '获取验证码';
-        }
+        const data = await LF.api.post('/auth/send-code', { email, type: 'reset' });
+        showTip(data.message || '验证码已发送，请查收邮件', false);
+        startCountdown(btn);
     } catch (err) {
-        console.error('发送验证码错误:', err);
-        showTip('网络错误，请检查后端服务是否运行', true);
+        showTip(err.message || '发送失败，请稍后重试', true);
         btn.disabled = false;
         btn.textContent = '获取验证码';
     }
@@ -568,60 +452,37 @@ async function handleResetPassword() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/auth/reset-password`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, code, new_password: newPassword })
+        await LF.api.post('/auth/reset-password', {
+            email, code, new_password: newPassword
         });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            showTip('密码重置成功，请重新登录', false);
-            setTimeout(() => {
-                showLoginModal();
-            }, 1500);
-        } else {
-            showTip(data.detail || '重置失败', true);
-        }
+        showTip('密码重置成功，请重新登录', false);
+        setTimeout(() => {
+            showLoginModal();
+        }, 1500);
     } catch (err) {
-        console.error('重置密码错误:', err);
-        showTip('网络错误，请稍后重试', true);
+        showTip(err.message || '重置失败', true);
     }
 }
 
 //logout
 function logout() {
-    if (confirm('确定要退出登录吗？')) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        updateAuthUI();
-        if (typeof updateAccountUI === 'function') updateAccountUI();
-        alert('已退出登录');
+    if (!confirm('确定要退出登录吗？')) return;
 
-        if (window.location.pathname.includes('manager.html')) {
-            window.location.reload();
-        }
+    LF.auth.clearSession();
+    updateAuthUI();
+    if (typeof updateAccountUI === 'function') updateAccountUI();
+    LF.toast('已退出登录', false);
 
-        window.dispatchEvent(new StorageEvent('storage', {
-            key: 'token',
-            newValue: null,
-            oldValue: localStorage.getItem('token')
-        }));
+    if (window.location.pathname.includes('manager.html')) {
+        window.location.reload();
     }
 }
 
 //获取用户
+// 实现已统一到 api.js（window.getCurrentUser / LookUFace.auth.getUser），
+// 这里只做一层转发，保证旧调用点（含 iframe 里的 window.parent.getCurrentUser）继续可用。
 function getCurrentUser() {
-    const userStr = localStorage.getItem('user');
-    if (userStr) {
-        try {
-            return JSON.parse(userStr);
-        } catch(e) {
-            return null;
-        }
-    }
-    return null;
+    return LF.auth.getUser();
 }
 
 

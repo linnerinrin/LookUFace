@@ -1,4 +1,6 @@
 // manager.js - 人脸库管理页面
+var LF = window.LookUFace;
+// 依赖：api.js（需先引入）。
 /*
 
 *获取人脸列表 调face/list-with-screenshot 接口调db 并且可以按照name/duration/online排序
@@ -28,8 +30,6 @@ showCheckoutModal()/closeCheckoutModal()  打开/关闭登出模态框 可选择
 */
 
 
-const themeToggle = document.getElementById('themeToggle');
-const logo = document.getElementById('logo');
 
 
 let currentSort = 'default'; //排序方式
@@ -38,49 +38,29 @@ let modifyTargetName = ''; //要修改的名字
 let checkoutTargetName = ''; //登出的脸
 let checkinTargetName = ''; //登入的脸
 
-//主题操作
-function initTheme() {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-        document.body.classList.add('dark');
-    }
-}
 
-function toggleTheme() {
-    document.body.classList.toggle('dark');
-    const isDark = document.body.classList.contains('dark');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-}
-
-themeToggle.addEventListener('click', toggleTheme);
-initTheme();
-logo.addEventListener('click', () => {
-    window.location.href = 'idx.html';
-});
 
 //检查是否已登录
 function isLoggedIn() {
-    const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
-    return !!(token && user);
+    return LF.auth.isLoggedIn();
 }
 
 
 //检查后端状态 fetch health接口
 async function checkBackend() {
+    const dot = document.getElementById('statusDot');
+    const label = document.getElementById('statusText');
     try {
-        const response = await fetch(`${API_BASE}/health`);
-        if (response.ok) {
-            document.getElementById('statusDot').className = 'status-dot connected';
-            document.getElementById('statusText').innerText = '已连接';
-            return true;
-        }
-    } catch (e) {
-        console.error('后端连接失败:', e);
+        const health = await LF.api.get('/health', { skipAuth: true });
+        if (dot) dot.className = 'status-dot connected';
+        if (label) label.innerText = health.status === 'healthy' ? '已连接' : '降级运行';
+        return health.status === 'healthy';
+    } catch (err) {
+        if (dot) dot.className = 'status-dot offline';
+        if (label) label.innerText = '未连接';
+        LF.log.warn('后端健康检查失败: ' + err.message);
+        return false;
     }
-    document.getElementById('statusDot').className = 'status-dot offline';
-    document.getElementById('statusText').innerText = '未连接';
-    return false;
 }
 
 // 登录状态变化时刷新按钮和列表
@@ -177,7 +157,8 @@ function showModifyModal(name) {
 
 // 关闭修改弹窗
 function closeModifyModal() {
-    document.getElementById('modifyModal').style.display = 'none';
+    const modal = document.getElementById('modifyModal');
+    if (modal) modal.style.display = 'none';
 }
 
 // 确认修改
@@ -186,50 +167,35 @@ async function confirmModify() {
     const newRegisterTime = document.getElementById('modifyRegisterTime').value;
     const imageFile = document.getElementById('modifyImage').files[0];
 
-    if (!newName) { alert('请输入名字'); return; }
+    if (!newName) { LF.toast('请输入名字', true); return; }
 
-    const token = localStorage.getItem('token');
-
-    const response = await fetch(`${API_BASE}/face/modify`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
+    try {
+        await LF.api.put('/faces/' + encodeURIComponent(modifyTargetName), {
             old_name: modifyTargetName,
             new_name: newName,
-            register_time: newRegisterTime || null
-        })
-    });
-
-    if (!response.ok) {
-        alert('修改失败');
+            // datetime-local 是本地时间，补上秒与 ISO 格式
+            register_time: newRegisterTime ? newRegisterTime + ':00' : null
+        });
+    } catch (err) {
+        LF.toast(err.message || '修改失败', true);
         return;
     }
-
-    const result = await response.json();
 
     if (imageFile) {
         const formData = new FormData();
         formData.append('file', imageFile);
         formData.append('name', newName);
-
-        const regResponse = await fetch(`${API_BASE}/face/register`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
-            body: formData
-        });
-
-        if (regResponse.ok) {
-            const regResult = await regResponse.json();
+        try {
+            const regResult = await LF.api.upload('/faces/register', formData);
             if (!regResult.success) {
-                alert('图片更新失败: ' + (regResult.message || '未知错误'));
+                LF.toast('图片更新失败：' + (regResult.message || '未知错误'), true);
             }
+        } catch (err) {
+            LF.toast('图片更新失败：' + err.message, true);
         }
     }
 
-    alert(`已保存`);
+    LF.toast('已保存', false);
     closeModifyModal();
     loadFaces();
 }
@@ -250,28 +216,19 @@ async function loadFaces() {
     grid.innerHTML = '<div class="loading-state">加载中...</div>';
 
     try {
-        const response = await fetch(`${API_BASE}/face/list_with_screenshots`, {
-            method:'POST',
-            headers: { 'Content-Type': 'application/json',
-                       'Authorization': `Bearer ${localStorage.getItem('token')}`
-             },
-        });
-
-        if (response.status === 401) {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
+        const data = await LF.api.get('/faces');
+        facesData = data.faces || [];
+        const onlineCount = facesData.filter(f => f.is_online).length;
+        const onlineEl = document.getElementById('onlineCount');
+        if (onlineEl) onlineEl.innerText = onlineCount;
+        renderFaces(facesData);
+    } catch (err) {
+        if (err.status === 401) {
+            LF.auth.clearSession();
             updateUIAfterLoginChange();
             return;
         }
-
-        const data = await response.json();
-        facesData = data.faces || [];
-        const onlineCount = facesData.filter(f => f.is_online).length;
-        document.getElementById('onlineCount').innerText = onlineCount;
-        renderFaces(facesData);
-
-    } catch (err) {
-        console.error('加载失败:', err);
+        LF.log.error('加载人脸列表失败: ' + err.message);
         grid.innerHTML = '<div class="error-state">加载失败，请检查后端服务</div>';
     }
 }
@@ -298,33 +255,42 @@ function renderFaces(faces) {
     let html = '';
     sorted.forEach((face, i) => {
         const registerTime = face.register_time ? new Date(face.register_time).toLocaleString() : '未知';
-        const safeName = face.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-        const onlineBadge = face.is_online ? '<span style="color:#4caf50; font-weight:600;">● 在线</span>' : '<span style="color:#999;">● 离线</span>';
+        const onlineBadge = face.is_online
+            ? (face.is_away
+                ? '<span style="color:#ff9800; font-weight:600;">● 暂离中</span>'
+                : '<span style="color:#4caf50; font-weight:600;">● 在线</span>')
+            : '<span style="color:#999;">● 离线</span>';
         const checkinTime = face.checkin_time ? new Date(face.checkin_time).toLocaleString() : '未签到';
         const totalMinutes = face.online_time || 0;
-        console.log(`${face.name} 的 online_time:`, totalMinutes);
-        const hours = Math.floor(totalMinutes / 60);
-        const mins = totalMinutes % 60;
-        const durationStr = `${hours}h ${mins}m`;
-        console.log(`${face.name} 的 durationStr:`, durationStr);
+        const durationStr = `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+
+        // 需要重新注册的特征（旧版 pickle 格式）给出显式提示
+        const staleBadge = face.features_current === false
+            ? ' <span style="color:#e53935; font-weight:600;" title="旧版特征格式，需重新注册后才能被识别">● 需重新注册</span>'
+            : '';
+
         const onlineBtn = face.is_online
-            ? `<button class="btn-checkout" onclick="showCheckoutModal('${safeName}')">签退</button>`
-            : `<button class="btn-checkin" onclick="checkinFace('${safeName}')">签到</button>`;
+            ? `<button class="btn-checkout" data-action="checkout">签退</button>`
+            : `<button class="btn-checkin" data-action="checkin">签到</button>`;
+
+        // 注意：名字只进 data-name 属性（经 escapeHtml 处理），绝不拼进 onclick。
+        // 旧版把名字插进 onclick="f('...')" 且只做了 \' 转义，可被注入。
         html += `
-            <div class="face-card-item" data-name="${safeName}">
+            <div class="face-card-item" data-name="${escapeHtml(face.name)}">
                 <div style="font-weight:700; color:var(--text-secondary); min-width:30px;"># ${i + 1}</div>
                 <div class="face-avatar">
                     <div class="avatar-placeholder">👤</div>
                 </div>
                 <div class="face-details">
-                    <div class="face-name">${escapeHtml(face.name)} ${onlineBadge}</div>
-                    <div class="face-time">签到: ${checkinTime} | 注册: ${registerTime} | 总在线: ${durationStr}</div>
+                    <div class="face-name">${escapeHtml(face.name)} ${onlineBadge}${staleBadge}</div>
+                    <div class="face-time">签到: ${escapeHtml(checkinTime)} | 注册: ${escapeHtml(registerTime)} | 总在线: ${durationStr}</div>
                 </div>
                 <div class="face-actions">
-                    <button class="btn-preview" onclick="previewFace('${safeName}')">预览</button>
-                    <button class="btn-modify" onclick="showModifyModal('${safeName}')">修改</button>
+                    <button class="btn-preview" data-action="preview">预览</button>
+                    <button class="btn-modify" data-action="modify">修改</button>
                     ${onlineBtn}
-                    <button class="btn-delete" onclick="deleteFace('${safeName}')">删除</button>
+                    <button class="btn-billing" data-action="billing">账单</button>
+                    <button class="btn-delete" data-action="delete">删除</button>
                 </div>
             </div>
         `;
@@ -332,15 +298,30 @@ function renderFaces(faces) {
     grid.innerHTML = html;
 }
 
+// 事件委托：所有按钮通过 data-action + 最近的 [data-name] 定位目标人脸。
+// 这样用户数据永远不进入 HTML 属性里的可执行上下文。
+document.getElementById('facesGrid').addEventListener('click', function (event) {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+
+    const card = button.closest('[data-name]');
+    if (!card) return;
+    const name = card.getAttribute('data-name');
+
+    switch (button.getAttribute('data-action')) {
+        case 'preview': previewFace(name); break;
+        case 'modify': showModifyModal(name); break;
+        case 'checkin': checkinFace(name); break;
+        case 'checkout': showCheckoutModal(name); break;
+        case 'delete': deleteFace(name); break;
+        case 'billing': showBillingModal(name); break;
+    }
+});
+
 //特殊字符转义
 function escapeHtml(str) {
-    if (!str) return '';
-    return str.replace(/[&<>]/g, function(m) {
-        if (m === '&') return '&amp;';
-        if (m === '<') return '&lt;';
-        if (m === '>') return '&gt;';
-        return m;
-    });
+    // 统一使用 api.js 的实现，旧版漏掉了引号与单引号
+    return LF.escapeHtml(str);
 }
 
 //预览
@@ -359,30 +340,26 @@ async function previewFace(name) {
     img.style.display = 'none';
 
     try {
-        const response = await fetch(`${API_BASE}/face/screenshot`, {
-            method:'POST',
-            headers: { 'Content-Type': 'application/json',
-                       'Authorization': `Bearer ${localStorage.getItem('token')}`
-             },
-            body:JSON.stringify({name})
-        });
-
-        if (response.status === 401) {
-            alert('请先登录');
-            closePreview();
-            if (typeof showLoginModal === 'function') showLoginModal();
-            return;
-        }
-
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const response = await LF.api.post('/faces/screenshot', { name }, { raw: true });
         const blob = await response.blob();
+
+        // 释放上一次的 objectURL，避免内存泄漏
+        if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
         const url = URL.createObjectURL(blob);
+        img.dataset.objectUrl = url;
+
         img.src = url;
         img.style.display = 'block';
         info.innerHTML = ` ${escapeHtml(name)} 注册时的照片 | 点击图片放大`;
         img.onclick = () => window.open(url, '_blank');
     } catch (err) {
-        info.innerHTML = ` 加载失败: ${err.message}`;
+        if (err.status === 401) {
+            LF.toast('请先登录', true);
+            closePreview();
+            if (typeof showLoginModal === 'function') showLoginModal();
+            return;
+        }
+        info.innerHTML = ` 加载失败: ${escapeHtml(err.message)}`;
     }
 }
 
@@ -391,16 +368,19 @@ function closePreview() {
     const modal = document.getElementById('previewModal');
     const img = document.getElementById('modalImg');
     modal.style.display = 'none';
-    if (img.src) {
-        URL.revokeObjectURL(img.src);
-        img.src = '';
+    // 只 revoke 我们自己创建的 objectURL（旧版直接 revoke img.src，
+    // 若 src 是普通路径会抛错，且容易重复 revoke）
+    if (img.dataset.objectUrl) {
+        URL.revokeObjectURL(img.dataset.objectUrl);
+        delete img.dataset.objectUrl;
     }
+    img.src = '';
 }
 
 //删 调用face.delete
 async function deleteFace(name) {
     if (!isLoggedIn()) {
-        alert('请先登录');
+        LF.toast('请先登录', true);
         if (typeof showLoginModal === 'function') showLoginModal();
         return;
     }
@@ -408,29 +388,16 @@ async function deleteFace(name) {
     if (!confirm(`确定要删除 "${name}" 吗？此操作不可恢复。`)) return;
 
     try {
-        const response = await fetch(`${API_BASE}/face`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json',
-                       'Authorization': `Bearer ${localStorage.getItem('token')}`
-             },
-            body: JSON.stringify({name})
-        });
-
-        if (response.status === 401) {
-            alert('请先登录');
+        await LF.api.del('/faces/' + encodeURIComponent(name));
+        LF.toast(`已删除 ${name}`, false);
+        loadFaces();
+    } catch (err) {
+        if (err.status === 401) {
+            LF.toast('请先登录', true);
             if (typeof showLoginModal === 'function') showLoginModal();
             return;
         }
-
-        const result = await response.json();
-        if (result.success) {
-            alert(`已删除 ${name}`);
-            loadFaces();
-        } else {
-            alert('删除失败');
-        }
-    } catch (err) {
-        alert('删除失败: ' + err.message);
+        LF.toast('删除失败：' + err.message, true);
     }
 }
 
@@ -448,24 +415,20 @@ function closeCheckinConfirmModal() {
 }
 
 document.getElementById('confirmCheckinBtn').addEventListener('click', async () => {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`${API_BASE}/check/checkin`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ name: checkinTargetName, request_times: 999 })
-    });
-
-    if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-            alert(data.message);
-        }
+    // 说明：旧版要传 request_times=999 来绕过前端的帧计数去抖；
+    // 新接口不再接受该字段，去抖由服务端负责。
+    const button = document.getElementById('confirmCheckinBtn');
+    button.disabled = true;
+    try {
+        const data = await LF.api.post('/sessions/checkin', { name: checkinTargetName });
+        LF.toast(data.message, data.success === false);
+    } catch (err) {
+        LF.toast(err.message || '签到失败', true);
+    } finally {
+        button.disabled = false;
+        closeCheckinConfirmModal();
+        loadFaces();
     }
-    closeCheckinConfirmModal();
-    loadFaces();
 });
 
 function showCheckoutModal(name) {
@@ -475,14 +438,17 @@ function showCheckoutModal(name) {
 
     const defaultAway = face.is_online && !face.is_away;
     document.getElementById('checkoutAway').checked = defaultAway;
-    document.querySelector('#checkoutModal .modal-header h3').textContent = defaultAway ? '暂离' : '签退结算';
+    const title = document.querySelector('#checkoutModal .modal-header h3');
+    if (title) title.textContent = defaultAway ? '暂离' : '签退结算';
 
     document.getElementById('checkoutCheckinTime').value = face.checkin_time
         ? new Date(face.checkin_time).toLocaleString()
         : '未签到';
 
-    document.querySelector('#checkoutModal .form-group label[for="checkoutDuration"]').textContent =
-        defaultAway ? '暂离时长（分钟）' : '本次在线时长（分钟）';
+    const label = document.querySelector('#checkoutModal .form-group label[for="checkoutDuration"]');
+    if (label) {
+        label.textContent = defaultAway ? '暂离时长（分钟，仅提示）' : '本次在线时长（分钟，服务端计算）';
+    }
 
     let defaultDuration = defaultAway ? 30 : 60;
     if (face.checkin_time && !defaultAway) {
@@ -500,33 +466,111 @@ function closeCheckoutModal() {
 }
 
 document.getElementById('confirmCheckoutBtn').addEventListener('click', async () => {
-    const duration = parseInt(document.getElementById('checkoutDuration').value) || 0;
-    const token = localStorage.getItem('token');
     const away = document.getElementById('checkoutAway')?.checked || false;
+    const button = document.getElementById('confirmCheckoutBtn');
+    button.disabled = true;
 
-    const response = await fetch(`${API_BASE}/check/checkout`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
+    try {
+        // 说明：旧版会把「本次在线时长」当作 away_time / online_time 传给后端，
+        // 而时长与金额现在完全由服务端按数据库时间戳计算，前端不再参与。
+        const data = await LF.api.post('/sessions/checkout', {
             name: checkoutTargetName,
-            away: away,         // ← 用复选框的值
-            away_time: away ? duration : null
-        })
-    });
-
-    if (response.ok) {
-        const data = await response.json();
+            away: away
+        });
         if (data.success) {
-            alert(away ? `暂离成功，请在 ${duration} 分钟内归来` : `签退成功，在线时长: ${data.online_time || duration} 分钟`);
+            LF.toast(away
+                ? `已暂离，超过 ${settingsAwayTimeout()} 分钟未归将自动签退`
+                : `签退成功，本次 ${data.session_minutes} 分钟，应付 ${data.amount.toFixed(2)} 元`,
+                false);
+        } else {
+            LF.toast(data.message, true);
         }
+    } catch (err) {
+        LF.toast(err.message || '操作失败', true);
+    } finally {
+        button.disabled = false;
+        closeCheckoutModal();
+        loadFaces();
     }
-    closeCheckoutModal();
-    loadFaces();
 });
 
+/** 暂离超时提示文案；由 /sessions/status 缓存，默认 30。 */
+let awayTimeoutMinutes = 30;
+function settingsAwayTimeout() {
+    return awayTimeoutMinutes;
+}
+
+
+/* ==================== 计费二维码 ==================== */
+
+/**
+ * 生成并展示账单二维码。
+ *
+ * 时长与金额完全由服务端按签到时间计算（POST /billing/quote 只传姓名），
+ * 旧版是把前端输入框里的「本次在线时长」当参数传给 /check/pay，
+ * 既能免单也能超收，且前端根本没有调用入口。
+ */
+async function showBillingModal(name) {
+    const modal = document.getElementById('billingModal');
+    const qrcode = document.getElementById('billingQrcode');
+    const hint = document.getElementById('billingQrcodeHint');
+    const payBtn = document.getElementById('billingPayLinkBtn');
+
+    if (!modal) return;
+
+    document.getElementById('billingName').value = name;
+    document.getElementById('billingMinutes').value = '计算中…';
+    document.getElementById('billingAmount').value = '计算中…';
+    qrcode.style.display = 'none';
+    hint.style.display = 'block';
+    hint.textContent = '正在生成二维码…';
+    payBtn.disabled = true;
+    payBtn.dataset.payUrl = '';
+    modal.style.display = 'flex';
+
+    try {
+        const quote = await LF.api.post('/billing/quote', { name: name });
+
+        document.getElementById('billingMinutes').value =
+            quote.minutes + ' 分钟（单价 ' + quote.rate_per_minute.toFixed(2) + ' 元/分钟）';
+        document.getElementById('billingAmount').value = '¥ ' + quote.amount.toFixed(2);
+        document.getElementById('billingTitle').textContent = name + ' 的账单';
+
+        if (quote.qrcode_url) {
+            if (qrcode.dataset.objectUrl) URL.revokeObjectURL(qrcode.dataset.objectUrl);
+            qrcode.src = quote.qrcode_url;
+            qrcode.style.display = 'block';
+            hint.style.display = 'none';
+        } else {
+            hint.textContent = '二维码生成失败，可使用支付链接';
+        }
+
+        payBtn.dataset.payUrl = quote.pay_url || '';
+        payBtn.disabled = !quote.pay_url;
+    } catch (err) {
+        document.getElementById('billingMinutes').value = '—';
+        document.getElementById('billingAmount').value = '—';
+        hint.textContent = '生成失败：' + err.message;
+        LF.log.error('生成账单失败: ' + err.message);
+    }
+}
+
+function closeBillingModal() {
+    const modal = document.getElementById('billingModal');
+    if (modal) modal.style.display = 'none';
+}
+
+document.getElementById('billingPayLinkBtn')?.addEventListener('click', function () {
+    const url = this.dataset.payUrl;
+    if (url) window.open(url, '_blank', 'noopener');
+});
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeBillingModal();
+});
+
+window.showBillingModal = showBillingModal;
+window.closeBillingModal = closeBillingModal;
 
 // 页面可见性变化时刷新
 document.addEventListener('visibilitychange', function() {
@@ -547,6 +591,16 @@ document.addEventListener('keydown', function(e) {
 async function init() {
     await checkBackend();
     updateUIAfterLoginChange();
+
+    // 从服务端读取暂离超时，避免前端硬编码文案与服务端不一致
+    if (LF.auth.isLoggedIn()) {
+        try {
+            const version = await LF.api.get('/version', { skipAuth: true });
+            if (typeof version.away_timeout_minutes === 'number') {
+                awayTimeoutMinutes = version.away_timeout_minutes;
+            }
+        } catch (err) { /* 取不到就用默认值 */ }
+    }
 }
 
 document.getElementById('refreshBtn').onclick = () => loadFaces();

@@ -1,8 +1,36 @@
-/models/
-*.db
-venv/
-__pycache__/
-.idea/
-*.pyc
+# ---- 密钥与本地配置 ----
 .env
+.env.*
+!.env.example
+
+# ---- 运行时产物 ----
+/models/
+models/
+*.db
+*.db-journal
+*.sqlite3
+/logs/
+/logs
 /storage/
+/uploads/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 工具/编辑器 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,46 @@
+# 构建上下文排除项
+#
+# 注意：**不要**排除 models/ —— docker-compose 会以只读方式挂载 ./models，
+# 且旧版在这里排除了 models 又在 compose 里挂载，两者策略冲突：
+# 镜像里没有模型，一旦挂载缺失就只剩静默降级。
+# 若模型文件很大且确实不想进镜像，请保留 compose 的挂载并确认此处排除是有意为之。
+
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# 密钥绝不进镜像
+.env
+.env.*
+!.env.example
+
+# 运行时产物
+logs/
+storage/
+uploads/
+*.db
+*.db-journal
+
+# 测试与缓存
+tests/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/

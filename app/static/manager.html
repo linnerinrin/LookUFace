@@ -176,6 +176,45 @@
         </div>
     </div>
 
+    <div id="billingModal" class="modal" style="display: none;">
+        <div class="modal-content auth-content" style="max-width: 460px;">
+            <div class="modal-header">
+                <h3 id="billingTitle">账单结算</h3>
+                <button class="modal-close" onclick="closeBillingModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>姓名</label>
+                    <input type="text" id="billingName" class="auth-input" disabled>
+                </div>
+                <div class="form-group">
+                    <label>计费时长</label>
+                    <input type="text" id="billingMinutes" class="auth-input" disabled>
+                </div>
+                <div class="form-group">
+                    <label>应付金额</label>
+                    <input type="text" id="billingAmount" class="auth-input" disabled>
+                </div>
+                <div style="text-align:center; margin: 12px 0;">
+                    <img id="billingQrcode" alt="支付二维码"
+                         style="width: 220px; height: 220px; display: none;
+                                border-radius: 12px; background: #fff; padding: 8px;">
+                    <div id="billingQrcodeHint" style="color: var(--text-secondary); font-size: 13px;">
+                        正在生成二维码…
+                    </div>
+                </div>
+                <p style="color: var(--text-secondary); font-size: 12px; text-align:center; margin-bottom: 12px;">
+                    时长与金额由服务端按签到时间计算，前端无法修改
+                </p>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn btn-outline" onclick="closeBillingModal()">关闭</button>
+                    <button class="btn btn-primary" id="billingPayLinkBtn">打开支付链接</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="api.js"></script>
     <script src="auth.js"></script>
     <script src="manager.js"></script>
 </body>

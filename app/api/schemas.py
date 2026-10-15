@@ -1,87 +1,314 @@
-"""
-app/api/schemas.py
-数据模型定义
-Faceinfo 人脸信息
+"""统一的 API 请求/响应模型。
+
+命名一致性（修复旧版三套风格混用的问题）
+----------------------------------------
+旧版同一层 API 里同时存在 ``/face/list_with_screenshots``（下划线）、
+``/check/checkin``（无分隔）、``/auth/change-password``（连字符）三种风格，
+请求体字段也是 ``old_name`` 与 ``is_online`` 混用。
+
+现在统一为：
+
+* **路径**：kebab-case，资源式（``/auth/change-password``、``/faces``、``/sessions/checkin``）
+* **JSON 字段**：snake_case（与 Python 一致）
+* 所有错误响应统一为 ``{detail, code, request_id, details?}``
 """
 
-from pydantic import BaseModel
-from typing import List, Dict, Optional
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+# --------------------------------------------------------------------------- #
+# 通用
+# --------------------------------------------------------------------------- #
+
+
+class ErrorResponse(BaseModel):
+    """统一错误结构。"""
+
+    detail: str
+    code: str = "error"
+    request_id: str | None = None
+    details: dict[str, Any] | None = None
+
+
+class HealthResponse(BaseModel):
+    status: Literal["healthy", "degraded"]
+    version: str
+    database: bool
+    models: dict[str, bool]
+    models_loaded: bool
+
+
+# --------------------------------------------------------------------------- #
+# 认证
+# --------------------------------------------------------------------------- #
+
+
+class UserProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    nickname: str | None = None
+    avatar: str | None = None
+    bio: str | None = None
+    face_identity: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class SendCodeRequest(BaseModel):
+    email: EmailStr
+    type: Literal["register", "reset"] = "register"
+
+
+class SendCodeResponse(BaseModel):
+    success: bool = True
+    message: str = "验证码已发送"
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    code: str = Field(min_length=6, max_length=6)
+    nickname: str | None = Field(default=None, max_length=50)
+
+    @field_validator("code")
+    @classmethod
+    def _digits_only(cls, value: str) -> str:
+        value = value.strip()
+        if not value.isdigit():
+            raise ValueError("验证码必须是 6 位数字")
+        return value
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class TokenResponse(BaseModel):
+    success: bool = True
+    token: str
+    user: UserProfile
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+class SimpleMessageResponse(BaseModel):
+    success: bool = True
+    message: str
+
+
+class UpdateProfileRequest(BaseModel):
+    nickname: str | None = Field(default=None, max_length=50)
+    bio: str | None = Field(default=None, max_length=500)
+
+
+class UpdateProfileResponse(BaseModel):
+    success: bool = True
+    user: UserProfile
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+# --------------------------------------------------------------------------- #
+# 人脸
+# --------------------------------------------------------------------------- #
+
+
+class FaceItem(BaseModel):
+    name: str
+    screenshot: str | None = None
+    register_time: datetime | None = None
+    online_time: int = 0
+    is_online: bool = False
+    is_away: bool = False
+    checkin_time: datetime | None = None
+    #: 特征是否为当前算法版本（False 表示需要重新注册）
+    features_current: bool = True
+
+
+class FacesListResponse(BaseModel):
+    faces: list[FaceItem]
+
+
+class FaceRegisterResponse(BaseModel):
+    success: bool
+    name: str
+    screenshot: str | None = None
+    message: str
+
+
+class FaceRenameRequest(BaseModel):
+    old_name: str = Field(min_length=1, max_length=100)
+    new_name: str = Field(min_length=1, max_length=100)
+    register_time: datetime | None = None
+
+
+class FaceDeleteRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class FaceDeleteResponse(BaseModel):
+    success: bool
+    name: str
+    message: str
+
+
+class FaceScreenshotRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class FaceModifyResponse(BaseModel):
+    success: bool
+    message: str
+
+
+# --------------------------------------------------------------------------- #
+# 会话 / 计费
+# --------------------------------------------------------------------------- #
+
+
+class CheckInRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class CheckOutRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    away: bool = False
+
+
+class SessionStatusRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class SessionStatusResponse(BaseModel):
+    name: str
+    is_online: bool
+    is_away: bool
+    checkin_time: datetime | None = None
+    #: 前端展示用的实时预估分钟数（结算以服务端签退结果为准）
+    preview_minutes: int = 0
+    online_time: int = 0
+    away_timeout_minutes: int = 0
+
+
+class CheckInResponse(BaseModel):
+    success: bool
+    name: str
+    message: str
+    is_online: bool = False
+    is_away: bool = False
+    deduplicated: bool = False
+
+
+class CheckOutResponse(BaseModel):
+    success: bool
+    name: str
+    message: str
+    session_minutes: int = 0
+    total_minutes: int = 0
+    amount: float = 0.0
+    is_online: bool = False
+    is_away: bool = False
+
+
+class BillingQuoteRequest(BaseModel):
+    """计费报价请求。
+
+    注意：**不接受前端传入的时长**。分钟数由服务端按当前会话状态计算，
+    避免旧版 ``online_time`` 由客户端任意指定导致的免单/超收。
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+
+
+class BillingQuoteResponse(BaseModel):
+    name: str
+    minutes: int
+    amount: float
+    rate_per_minute: float
+    pay_url: str
+    qrcode_url: str
+
+
+# --------------------------------------------------------------------------- #
+# 分析（一次性上传分析，供调试与第三方集成）
+# --------------------------------------------------------------------------- #
 
 
 class FaceInfo(BaseModel):
-    """单个人脸信息"""
-    bbox: List[int]
+    bbox: list[int]
     gender: str = "Unknown"
     age: str = "Unknown"
     confidence: float = 0.0
     identity: str = "Unknown"
     identity_confidence: float = 0.0
+    detection_confidence: float = 0.0
 
 
 class DetectResponse(BaseModel):
     request_id: str
-    faces: List[FaceInfo]
+    faces: list[FaceInfo]
     face_count: int
     processing_ms: float
     timestamp: datetime
 
-class HealthRequest(BaseModel):
-    # 此数据类不使用 接口不需要请求数据
-    ...
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-    models_loaded: bool
 
-class FaceRegisterRequest(BaseModel):
-    # 此数据类不使用 接口使用multi/file&form接收数据 Pydantic不兼容
-    ...
-class FaceRegisterResponse(BaseModel):
-    success: bool
-    name: str
-    screenshot: str
-    message: str
+# --------------------------------------------------------------------------- #
+# 日志
+# --------------------------------------------------------------------------- #
 
-class FaceListRequest(BaseModel):
-    #此数据类不使用 接口不需要请求数据
-    ...
-class FacesListResponse(BaseModel):
-    faces: List[Dict]
-
-class GetScreenshotRequest(BaseModel):
-    name: str
-class GetScreenshotResponse(BaseModel):
-    #此数据类不使用 接口使用FileResponse
-    ...
-
-class DeleteFaceRequest(BaseModel):
-    name: str
-class DeleteFaceResponse(BaseModel):
-    success: bool
-    name: str
-
-class ModifyFaceRequest(BaseModel):
-    old_name: str
-    new_name: Optional[str] = None
-    register_time: Optional[str] = None
-    is_online: Optional[bool] = None
-
-class ModifyFaceResponse(BaseModel):
-    success: bool
-    message: str
 
 class FrontendLogRequest(BaseModel):
-    level: str
-    message: str
-    page: str
+    level: Literal["info", "warn", "error"] = "info"
+    message: str = Field(max_length=2000)
+    page: str = Field(default="unknown", max_length=100)
+
+
 class FrontendLogResponse(BaseModel):
-    ok: bool
+    ok: bool = True
+
 
 class GetLogsRequest(BaseModel):
-    lines: int
-    level: str
-    date: str
+    lines: int = Field(default=100, ge=1, le=2000)
+    level: Literal["all", "info", "warn", "error", "debug", "critical"] = "all"
+    date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
 class GetLogsResponse(BaseModel):
-    logs: List[str]
+    logs: list[str]
+    file: str | None = None
+    total: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# WebSocket 消息
+# --------------------------------------------------------------------------- #
+
+
+class WsFaceMessage(BaseModel):
+    success: bool = True
+    face_count: int
+    faces: list[FaceInfo]
+    processing_ms: float
+
+
+class WsErrorMessage(BaseModel):
+    success: bool = False
+    detail: str
+    code: str = "error"
+
+
+__all__ = [name for name in dir() if name.endswith(("Request", "Response", "Item", "Message"))]

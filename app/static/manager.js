@@ -657,31 +657,22 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
 /* ==================== 支付 ==================== */
 
 /**
- * 二维码占位图内容。
+ * 二维码占位图：**只写「开发中」三个字，不加任何样式**。
  *
  * 需求：二维码内容暂且写文字「开发中」，等接入真实收银台后再替换为下单结果。
- * 这里用内联 SVG（data URI）而不是位图，好处是：
- *   - 不新增静态资源文件，也不依赖网络；
- *   - 文案清晰可读，一眼就知道是占位而不是"扫不出来"。
- * 接入真实支付时，只需把下面的 `src` 换成服务端返回的二维码地址。
+ *
+ * 实现：用内联 SVG（data URI），只放一行文字 —— 没有边框、没有配色、
+ * 没有额外说明。这样既不新增静态资源、不依赖网络，也不会让人误以为
+ * 那是一张真的二维码。
+ *
+ * 接入真实支付时，把 ``showPayModal`` 里赋给 ``qrcode.src`` 的值换成
+ * 服务端返回的二维码地址即可。
  */
 function buildPlaceholderQrSvg(text) {
     const label = text || '开发中';
-    const svg = ''
-        + '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
-        + '<rect width="200" height="200" fill="#ffffff"/>'
-        // 四角定位框，让它一眼能看出"这是二维码占位"
-        + '<rect x="12" y="12" width="42" height="42" fill="none" stroke="#c9ced6" stroke-width="8"/>'
-        + '<rect x="146" y="12" width="42" height="42" fill="none" stroke="#c9ced6" stroke-width="8"/>'
-        + '<rect x="12" y="146" width="42" height="42" fill="none" stroke="#c9ced6" stroke-width="8"/>'
-        + '<rect x="24" y="24" width="18" height="18" fill="#c9ced6"/>'
-        + '<rect x="158" y="24" width="18" height="18" fill="#c9ced6"/>'
-        + '<rect x="24" y="158" width="18" height="18" fill="#c9ced6"/>'
-        // 右上角的"开发中"角标
-        + '<text x="100" y="104" text-anchor="middle" font-family="Microsoft YaHei,Arial,sans-serif"'
-        + ' font-size="24" font-weight="700" fill="#ff9800">' + label + '</text>'
-        + '<text x="100" y="130" text-anchor="middle" font-family="Microsoft YaHei,Arial,sans-serif"'
-        + ' font-size="11" fill="#8a94a3">支付通道未接入</text>'
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">'
+        + '<text x="100" y="100" text-anchor="middle" dominant-baseline="middle"'
+        + ' font-size="28">' + label + '</text>'
         + '</svg>';
     // 用 encodeURIComponent 而不是 base64，便于直接阅读与排查
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);

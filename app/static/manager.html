@@ -235,15 +235,10 @@
                    style="color: var(--text-secondary); font-size: 13px; text-align:left;
                           margin: 4px 0 12px; line-height: 1.6;"></p>
 
-                <div style="text-align:center; margin: 8px 0 4px;">
-                    <img id="payQrcode" alt="支付二维码（开发中）"
-                         style="width: 200px; height: 200px; border-radius: 12px;
-                                background: #fff; padding: 8px; display: inline-block;">
+                <!-- 二维码为占位图，内容只有「开发中」三个字，不加任何样式 -->
+                <div style="text-align:center; margin: 8px 0 16px;">
+                    <img id="payQrcode" alt="开发中">
                 </div>
-                <p style="text-align:center; color: var(--text-secondary); font-size: 12px;
-                          margin-bottom: 16px;">
-                    二维码内容为占位（业务开发中）
-                </p>
 
                 <div style="display: flex; gap: 10px; justify-content: center;">
                     <button class="btn btn-outline" onclick="closePayModal()">稍后支付</button>

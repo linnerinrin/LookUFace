@@ -249,62 +249,60 @@ def test_checkout_title_has_no_parentheses() -> None:
             )
 
 
-def test_future_checkout_time_is_reported_not_silently_rewritten() -> None:
-    """用户选了未来的签退时间时，必须**明确报错**，不能悄悄改成"现在"。
+def test_checkout_uses_duration_minutes_as_primary_input() -> None:
+    """签退弹窗以「在场时长（分钟）」为主要输入。
 
-    **这是实测的「账单突然变成全 0」元凶**，也是我一开始归因错的地方：
+    需求原文：「在签退界面设置为多少分钟而不是修改签到时间」。
 
-    用户以为"选择数分钟以后"表示"结算到那个时刻"，但计费只能结算
-    **已经过去**的时间。旧实现的处理链是——
-
-      1. 前端提交时把未来值**静默改写**成"现在"（无任何提示）；
-      2. 服务端再把未来值**静默收敛**成当前时刻。
-
-    两步都无声无息，于是用户拿到 0 元账单，完全不知道发生了什么，
-    只能回来问"账单又变成全 0 了"。
-
-    现在要求：
-      * 控件上限用**服务端时刻**（``server_now``）设定，未来时刻根本选不了；
-      * 万一还是提交了未来时刻，前端必须把原因显示在弹窗里并中断提交；
-      * 不允许再出现"静默把值改掉然后继续提交"的写法。
+    因此：
+      * 必须有 ``checkoutDurationInput`` 这个数字输入；
+      * 签到时间保持只读（``disabled``），不再是可编辑的时间控件；
+      * 提交时把分钟数作为 ``duration_minutes`` 发给服务端。
     """
-    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
-    handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
-
-    # 前端必须对"晚于当前"给明确报错并中断
-    assert "签退时间不能晚于当前时刻" in handler, "前端未对未来的签退时间给出明确报错"
-    assert "errorEl.style.display = 'block'" in handler, "未把错误显示在弹窗里"
-    assert "return;" in handler, "未中断提交"
-
-    # 不允许静默改写（旧写法：把 value 直接改成 nowValue）
-    assert "customEl.value = nowValue;" not in handler, (
-        "仍在静默改写用户的未来时间 —— 这正是导致'莫名 0 元'的原因"
-    )
-
-    # 上限应来自服务端时刻，避免浏览器时钟偏差造成误判
-    assert "status.server_now" in manager_js, "未用服务端时刻校正控件上限"
-    assert "server_now" in manager_js and "customEl.max = serverMax" in manager_js
-
-    # 文案要把规则讲清楚
     html = (STATIC_DIR / "manager.html").read_text(encoding="utf-8")
-    assert "当前时刻或更早" in html, "界面未说明'只能填当前时刻或更早'"
+    assert 'id="checkoutDurationInput"' in html, "缺少「在场时长（分钟）」输入框"
+    assert 'type="number"' in html, "在场时长应为数字输入"
+    assert 'id="checkoutCustomTime"' in html, "签退时间控件仍应保留"
+
+    # 签到时间恢复只读展示
+    match = re.search(r"<input[^>]*id=\"checkoutCheckinTime\"[^>]*>", html)
+    assert match, "未找到签到时间控件"
+    assert "disabled" in match.group(0), "签到时间应保持只读（不再让用户改签到时间）"
+
+    manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
+    handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
+    assert "payload.duration_minutes" in handler, "提交时未发送在场时长"
+    assert "durationEl.value" in handler, "提交时未读取在场时长"
 
 
-def test_frontend_clamps_stale_checkout_time_on_submit() -> None:
-    """提交前必须处理已过期的签退时间。
+def test_checkout_no_longer_raises_time_errors() -> None:
+    """不再因为"时间看起来不合理"而报错。
 
-    回归背景（实测）：弹窗打开时控件被填入"当时"的时间，过了约 9 分钟才点确认，
-    该时间已成未来，提交被服务端拒绝：
-        「当前约 03:36:59，你填的是 03:45:37」
-    前端在提交时刷新 max，服务端对轻微时钟偏差做收敛兜底。
+    需求原文：「取消设置时间不合理的错误提示」。
+
+    早期实现对"未来时刻"报错，用户填了 10 小时以后只拿到一句错误提示，
+    既没算出账单也不知道该改什么。现在改为：
+      * 未来的签退时刻 -> 服务端按当前时刻结算，不报错；
+      * 想按更长时长计费 -> 用「在场时长（分钟）」表达。
     """
     manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
     handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
 
-    assert "customEl.max = nowValue" in handler, "提交时未重新同步时间上限"
-    assert "customEl.value > nowValue" in handler, (
-        "提交时未检查已过期的签退时间"
+    # 只看代码行：注释里提到这些文案是允许的（那是在说明"已不再报这个错"）
+    code = "\n".join(
+        line for line in handler.splitlines()
+        if not line.strip().startswith(("//", "*", "/*"))
     )
+
+    for forbidden in (
+        "签退时间不能晚于当前时刻",
+        "签退时间不能早于签到时间",
+        "计费只结算已经过去的时间",
+    ):
+        assert forbidden not in code, f"前端仍在因时间不合理报错：{forbidden}"
+
+    # 不该再有"提前 return 打断提交"的时间校验
+    assert "customEl.value > nowValue" not in code, "仍在做未来时间的比对后中断提交"
 
 
 def test_datetime_input_disables_autocomplete() -> None:
@@ -328,7 +326,6 @@ def test_default_checkout_time_is_not_sent_to_server() -> None:
 
     这样"现在签退"就完全由服务端用当前时间处理 ——
     既不受浏览器回填旧值影响，也不受本机与服务器时钟差影响。
-    用户手动改过时仍要完整支持（事后补签退）。
     """
     manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
     handler = manager_js[manager_js.find("confirmCheckoutBtn"):]
@@ -336,7 +333,7 @@ def test_default_checkout_time_is_not_sent_to_server() -> None:
     assert "dataset.edited === '1'" in handler, (
         "提交逻辑未检查「用户是否手动改过」，可能把浏览器回填的旧值发给服务端"
     )
-    assert "if (checkoutTime)" in handler, "未对 checkout_time 做条件性发送"
+    assert "payload.checkout_time" in handler, "未对 checkout_time 做条件性发送"
 
     # 打开弹窗时必须先清空再赋值（否则回填的旧值会被保留）
     opener = manager_js[manager_js.find("function showCheckoutModal"):]
@@ -345,16 +342,14 @@ def test_default_checkout_time_is_not_sent_to_server() -> None:
     )
 
 
-def test_editing_checkout_time_marks_it_as_user_set() -> None:
-    """用户改动签退时间（输入或选择）时必须标记为"用户已指定"。"""
+def test_duration_input_previews_amount_live() -> None:
+    """改动在场时长时金额应实时预演（否则用户不知道填多少。"""
     manager_js = (STATIC_DIR / "manager.js").read_text(encoding="utf-8")
     opener = manager_js[manager_js.find("function showCheckoutModal"):]
 
-    assert "dataset.edited = '0'" in opener, "打开弹窗时未重置「用户已改」标记"
-    assert "dataset.edited = '1'" in opener, "输入变化时未标记「用户已改」"
-    assert "customEl.oninput" in opener and "customEl.onchange" in opener, (
-        "必须同时监听 input 与 change（不同交互方式触发的事件不同）"
-    )
+    assert "durationEl.oninput" in opener, "在场时长未绑定 input 事件"
+    assert "durationEl.onchange" in opener, "在场时长未绑定 change 事件"
+    assert "preview()" in opener, "缺少预演函数"
 
 
 def test_payment_placeholder_page_exists() -> None:

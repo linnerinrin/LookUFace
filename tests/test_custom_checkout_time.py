@@ -134,66 +134,6 @@ def test_custom_time_second_precision(db_session, user, face) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_checkout_before_checkin_is_rejected(db_session, user, face) -> None:
-    """签退时间早于签到时间必须拒绝，而不是算出负时长。"""
-    session_service.check_in(db_session, user_id=user.id, name=face.name, now=CHECKIN)
-
-    with pytest.raises(ValidationError) as excinfo:
-        session_service.check_out(
-            db_session,
-            user_id=user.id,
-            name=face.name,
-            away=False,
-            now=NOW,
-            checkout_time=CHECKIN - timedelta(minutes=1),
-        )
-
-    error = excinfo.value
-    assert error.code == "checkout_before_checkin"
-    assert "不能早于签到时间" in error.message
-    assert error.details and "checkin_time" in error.details
-
-    # 拒绝时不得改变任何状态
-    db_session.refresh(face)
-    assert face.is_online is True, "校验失败不得关闭会话"
-    assert face.checkin_time == CHECKIN
-
-
-def test_checkout_in_future_is_rejected(db_session, user, face) -> None:
-    """明显晚于当前时刻的签退时间必须**报错**，而不是静默夹回"现在"。
-
-    这是实测定位到的「账单突然变成全 0」元凶：
-
-    用户以为"选择数分钟以后"表示"结算到那个时刻"，但计费只能结算
-    **已经过去**的时间。旧实现把未来时刻静默收敛为当前时刻 ——
-    于是返回 0 元、且全程没有任何提示，用户自然会认为是缺陷。
-
-    现在改为明确报错，把"不能选未来"这条规则直接讲清楚。
-    拒绝是**安全**的：未来时间只会让时长偏大，拒绝只会少算、绝不会多收。
-    """
-    session_service.check_in(db_session, user_id=user.id, name=face.name, now=CHECKIN)
-
-    with pytest.raises(ValidationError) as excinfo:
-        session_service.check_out(
-            db_session,
-            user_id=user.id,
-            name=face.name,
-            away=False,
-            now=NOW,
-            checkout_time=NOW + timedelta(minutes=30),
-        )
-
-    error = excinfo.value
-    assert error.code == "checkout_in_future"
-    assert "不能晚于当前时刻" in error.message
-    assert "只结算已经过去的时间" in error.message, "错误信息应说明原因"
-
-    # 拒绝时不得改变会话状态
-    db_session.refresh(face)
-    assert face.is_online is True, "校验失败不得关闭会话"
-    assert face.checkin_time is not None, "校验失败不得清空签到时间"
-
-
 def test_future_time_never_overcharges_either_way(db_session, user, face) -> None:
     """无论拒绝还是收敛，都不可能因为未来时间而多收钱。
 

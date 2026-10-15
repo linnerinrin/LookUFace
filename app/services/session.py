@@ -38,14 +38,6 @@ from app.domain.session import (
 )
 from app.logger import logger
 
-#: 允许的时钟偏差（秒）。
-#:
-#: 管理员机器比服务器快几秒是常见情况，这种"轻微未来"不该报错，
-#: 收敛到当前时刻即可。但**明显**是未来时刻就必须报错 ——
-#: 那条路径曾经是"账单突然变成全 0"的元凶：旧实现一律静默夹回"现在"，
-#: 用户以为"选择数分钟以后"能结算到那个时刻，结果拿到 0 元且毫无提示。
-CLOCK_SKEW_TOLERANCE_SECONDS = 60
-
 
 @dataclass(slots=True)
 class ActionResult:
@@ -252,25 +244,35 @@ class SessionService:
         now: datetime | None = None,
         skip_debounce: bool = False,
         checkout_time: datetime | None = None,
+        checkin_time: datetime | None = None,
+        duration_minutes: int | None = None,
     ) -> ActionResult:
         """签退（``away=False``）或标记暂离（``away=True``）。
 
-        ``checkout_time`` 允许**自定义结算时刻**（事后补签退用）。它只影响签退结算，
-        不影响暂离 —— 暂离不结算，改变「暂离时刻」没有意义。
+        补录在场时间有三种方式，优先级从高到低：
 
-        校验规则：
+        1. ``duration_minutes`` —— **首选**。服务端把计费起点顺推为
+           ``结算时刻 - duration_minutes``，所以"填 600 就是 10 小时"，
+           永远算得出结果。
+        2. ``checkin_time`` —— 直接把起点改到指定时刻。
+        3. 都不给 —— 用现有的签到时间。
 
-        * 不得早于本次会话的签到时间（否则会得到负时长）；
-        * 不得晚于当前时间（不允许「预支」未来的时长）。
+        ``checkout_time`` 用于指定结算时刻，缺省为"现在"。
 
-        越界时抛 ``ValidationError`` 而不是静默夹取，避免账目被悄悄改错。
+        设计原则：**不因为"时间看起来不合理"就报错**。
+        早期的实现会对未来源报错，结果用户"填了 10 小时以后"只拿到一句
+        错误提示，既没算出账单也不知道该填什么。现在改为把输入解释成
+        用户真正想要的语义（"在场多少分钟"），自然算得出金额。
         """
         moment = now or datetime.now()
         name = (name or "").strip()
         if not name:
             raise ValidationError("人名为空")
 
-        settle_at = moment if away else self._resolve_settle_moment(checkout_time, moment)
+        # 缺省表示"现在"，但**只有** checkout_time 走这个回落；
+        # checkin_time 的 None 必须保持 None（否则会被误解成"起点=现在"）。
+        settle_at = moment if away else self._normalize_moment_required(checkout_time, moment)
+        new_checkin = None if away else self._normalize_moment(checkin_time)
 
         with self._lock_for(user_id, name):
             face = self._load_face(db, user_id, name)
@@ -286,96 +288,69 @@ class SessionService:
             if away:
                 return self._mark_away(db, face, user_id, name, moment, skip_debounce)
 
-            settled_at = self._validate_settle_time(face, settle_at, moment, name)
-            return self._finalize(db, face, user_id, name, settled_at, reason="manual")
-
-    # ------------------------------------------------------------------ #
-    # 结算时刻的校验
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _resolve_settle_moment(
-        checkout_time: datetime | None,
-        fallback: datetime,
-    ) -> datetime:
-        """把前端传来的签退时间归一化成**与系统一致的无时区本地时间**。
-
-        带时区的值（如以 ``Z`` 结尾）先转成本地时间；``datetime-local`` 控件
-        提交的值本身无时区，直接使用。
-        """
-        if checkout_time is None:
-            return fallback
-        if checkout_time.tzinfo is not None:
-            return checkout_time.astimezone().replace(tzinfo=None)
-        return checkout_time
-
-    @staticmethod
-    def _validate_settle_time(
-        face: UserFace,
-        settle_at: datetime,
-        now: datetime,
-        name: str,
-    ) -> datetime:
-        """校验并**归一化**自定义签退时间，返回最终用于结算的时刻。
-
-        三条规则：
-
-        * **早于签到时间** -> 抛错。
-          真实的数据错误（会把时长算成负数），必须让用户明确修正。
-
-        * **明显晚于当前时刻**（超过 ``CLOCK_SKEW_TOLERANCE_SECONDS``）-> 抛错。
-          实测这就是"账单突然变成全 0"的元凶：用户以为"选择数分钟以后"
-          表示"结算到那个时刻"，但计费只能结算**已经过去**的时间。
-          旧实现把未来时刻**静默夹回现在**，于是返回 0 元且没有任何提示，
-          用户自然会认为是缺陷。
-
-          现在改为明确报错，把"不能选未来"这个规则直接讲清楚。
-          注意：这不是"多收钱"的问题 —— 未来时间只会让时长偏大，
-          拒绝它只会少算，绝不会多收。
-
-        * **仅轻微晚于当前时刻**（时钟误差范围内）-> 收敛到当前时刻。
-          管理员机器比服务器快几秒是常见情况，不该因此报错。
-        """
-        checkin = face.checkin_time
-        if checkin is not None and settle_at < checkin:
-            raise ValidationError(
-                f"签退时间不能早于签到时间（签到于 {checkin:%Y-%m-%d %H:%M:%S}，"
-                f"你填的是 {settle_at:%Y-%m-%d %H:%M:%S}）",
-                code="checkout_before_checkin",
-                details={
-                    "name": name,
-                    "checkin_time": checkin.isoformat(sep=" "),
-                    "checkout_time": settle_at.isoformat(sep=" "),
-                },
-            )
-
-        if settle_at > now:
-            # 轻微的时钟偏差：容忍，收敛到当前时刻
-            if (settle_at - now).total_seconds() <= CLOCK_SKEW_TOLERANCE_SECONDS:
+            # 结算时刻不能落在未来（未来时长无法结算），夹到当前时刻；
+            # 但不报错 —— 用户填未来时刻的真实意图通常是"在场更久"，
+            # 那应该通过 duration_minutes 表达。
+            if settle_at > moment:
                 logger.info(
-                    "签退时间 %s 略晚于当前时刻 %s（%s 秒内，按时钟误差处理），"
-                    "已收敛为当前时刻结算 name=%s",
+                    "签退时间 %s 晚于当前时刻 %s，已按当前时刻结算 name=%s"
+                    "（如需更长的在场时间，请用「在场时长（分钟）」补录）",
                     settle_at.isoformat(sep=" "),
-                    now.isoformat(sep=" "),
-                    CLOCK_SKEW_TOLERANCE_SECONDS,
+                    moment.isoformat(sep=" "),
                     name,
                 )
-                return now
+                settle_at = moment
 
-            # 明显是未来时刻：明确拒绝，而不是静默夹回"现在"
-            raise ValidationError(
-                f"签退时间不能晚于当前时刻（当前 {now:%Y-%m-%d %H:%M:%S}，"
-                f"你填的是 {settle_at:%Y-%m-%d %H:%M:%S}）。"
-                f"计费只结算已经过去的时间，请填当前时刻或更早的时间。",
-                code="checkout_in_future",
-                details={
-                    "name": name,
-                    "now": now.isoformat(sep=" "),
-                    "checkout_time": settle_at.isoformat(sep=" "),
-                    "tolerance_seconds": CLOCK_SKEW_TOLERANCE_SECONDS,
-                },
+            # 计费起点：由「在场时长」或显式 checkin_time 决定，否则沿用现有签到时间
+            override_checkin: datetime | None = None
+            if duration_minutes is not None:
+                override_checkin = settle_at - timedelta(minutes=max(0, int(duration_minutes)))
+            elif new_checkin is not None:
+                # 起点不能晚于结算时刻，否则会出现负时长
+                override_checkin = min(new_checkin, settle_at)
+
+            return self._finalize(
+                db, face, user_id, name, settle_at,
+                reason="manual", checkin_at=override_checkin,
             )
 
-        return settle_at
+    # ------------------------------------------------------------------ #
+    # 时刻归一化
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _normalize_moment(value: datetime | None) -> datetime | None:
+        """把前端传来的时刻归一化成**与系统一致的无时区本地时间**。
+
+        带时区的值（如以 ``Z`` 结尾）先转成本地时间；``datetime-local`` 控件
+        提交的值本身无时区，直接使用。``None`` 原样返回 ——
+        调用方据此区分"用户没给"与"用户给了某个时刻"。
+
+        **注意**：不要给这个函数加"缺省回落到 now"的行为。
+        早期版本的 ``_resolve_settle_moment(checkin_time, moment)`` 在
+        ``checkin_time is None`` 时返回 ``moment``，导致"用户没指定签到时间"
+        被误解成"把签到时间设为现在"，于是每次签退都算出 0 分钟 ——
+        所有签退账单变成 0 的根本原因。
+        """
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            return value.astimezone().replace(tzinfo=None)
+        return value
+
+    @classmethod
+    def _normalize_moment_required(
+        cls,
+        value: datetime | None,
+        fallback: datetime,
+    ) -> datetime:
+        """归一化一个**可选但缺省有意义**的时刻（目前只用于签退时刻）。
+
+        缺省时回落到 ``fallback``（当前时刻）—— 因为"不填签退时间"
+        确实就意味着"现在签退"。这与 ``checkin_time`` 的语义不同：
+        不填签到时间意味着"不改动起点"，绝不能回落到 now。
+        """
+        normalized = cls._normalize_moment(value)
+        return fallback if normalized is None else normalized
 
     def _mark_away(
         self,
@@ -434,9 +409,25 @@ class SessionService:
         moment: datetime,
         *,
         reason: str = "normal",
+        checkin_at: datetime | None = None,
     ) -> ActionResult:
-        """结算并关闭会话。计费完全由服务端计算。"""
+        """结算并关闭会话。计费完全由服务端计算。
+
+        ``checkin_at`` 允许**覆盖本次的计费起点**（补录时长用）。
+        必须通过参数传入、而不是先改 ``face.checkin_time``：
+        下面的 ``state_of`` 会重新读数据库，直接改内存对象的赋值会被忽略
+        （实测会静默算出 0 分钟）。
+        """
         state = self.state_of(user_id, name, face, now=moment)
+        if checkin_at is not None:
+            state = SessionState(
+                is_online=state.is_online,
+                is_away=state.is_away,
+                checkin_at=checkin_at,
+                accumulated_minutes=state.accumulated_minutes,
+                away_started_at=state.away_started_at,
+                settled_away_seconds=state.settled_away_seconds,
+            )
 
         # 先把仍在进行中的暂离收口：
         # ``clear_away`` 会把这段时长累加进 settled_away_seconds，同时清空

@@ -137,17 +137,34 @@
                 <button class="modal-close" onclick="closeCheckoutModal()">&times;</button>
             </div>
             <div class="modal-body">
+                <!-- 签到时间只读；要补录时长请用下面的「在场时长（分钟）」 -->
                 <div class="form-group">
                     <label>签到时间</label>
                     <input type="text" id="checkoutCheckinTime" class="auth-input" disabled>
                 </div>
 
-                <!-- 自定义签退时间：用于事后补签退，按真实离开时间结算 -->
+                <!-- 主要是这个：直接填分钟数（600 = 10 小时），金额实时预演 -->
+                <div class="form-group">
+                    <label for="checkoutDurationInput">
+                        在场时长（分钟）
+                        <span style="color: var(--text-secondary); font-weight: 400;">
+                            直接填分钟数
+                        </span>
+                    </label>
+                    <input type="number" id="checkoutDurationInput" class="auth-input"
+                           min="0" step="1" autocomplete="off" placeholder="例如 600 表示 10 小时">
+                    <p style="color: var(--text-secondary); font-size: 12px; margin-top: 6px;">
+                        填多少就按多少计费（服务端会把签到时间顺推到这个时长）。
+                        例如填 <strong>600</strong> = 10 小时 = 300.00 元。
+                    </p>
+                </div>
+
+                <!-- 自定义签退时间：默认现在；补录时也可填过去的真实离开时刻 -->
                 <div class="form-group">
                     <label for="checkoutCustomTime">
                         签退时间
                         <span style="color: var(--text-secondary); font-weight: 400;">
-                            可自定义，默认现在
+                            默认现在
                         </span>
                     </label>
                     <!-- autocomplete=off：Chrome 会把上一次的值"恢复"进
@@ -157,8 +174,7 @@
                            step="1" autocomplete="off">
                     <p style="color: var(--text-secondary); font-size: 12px; margin-top: 6px;"
                        id="checkoutCustomHint">
-                        只能填 <strong>当前时刻或更早</strong>：计费只结算已经过去的时间。
-                        事后补签退时，填真实离开的时间即可。
+                        一般不用改。若填了更早的时刻，则以「在场时长」为准结算。
                     </p>
                 </div>
 

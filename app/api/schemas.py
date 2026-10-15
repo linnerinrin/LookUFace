@@ -197,6 +197,15 @@ class CheckOutRequest(BaseModel):
     #:
     #: 注意：暂离（``away=true``）不使用该字段 —— 暂离不结算。
     checkout_time: datetime | None = None
+    #: 修正本次的**签到时刻**（可选）。缺省表示不改动现有计费起点。
+    #: 一般不需要用 —— 前端用 ``duration_minutes`` 更方便。
+    checkin_time: datetime | None = None
+    #: **在场时长（分钟）**（可选）。这是补录时首选的方式。
+    #:
+    #: 服务端会把签到时间顺推为 ``结算时刻 - duration_minutes``，
+    #: 因此「填 600 就是 10 小时」永远算得出结果，
+    #: 不会出现"填了未来时刻导致 0 元账单"这种让人困惑的情况。
+    duration_minutes: int | None = Field(default=None, ge=0, le=60 * 24 * 365)
 
 
 class SessionStatusRequest(BaseModel):

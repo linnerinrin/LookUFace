@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>场地设置</title>
+    <link rel="stylesheet" href="manager.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <style>
+        /* 本页专用：设置卡片与表单。沿用 manager.css 的侧边栏 / 按钮 / 主题变量，
+           只补设置页自己的排版 */
+        .settings-stack { display: flex; flex-direction: column; gap: 18px; max-width: 860px; }
+        .settings-card {
+            background: var(--card-bg);
+            border: 1px solid var(--sidebar-border);
+            border-radius: 18px;
+            padding: 20px 22px;
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+            backdrop-filter: blur(10px);
+        }
+        .settings-card h3 { font-size: 15px; margin-bottom: 4px; color: var(--text-primary); }
+        .settings-card .settings-desc {
+            font-size: 12.5px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.6;
+        }
+        .settings-row {
+            display: grid;
+            grid-template-columns: 1fr 180px;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 0;
+            border-top: 1px solid var(--sidebar-border);
+        }
+        .settings-row:first-of-type { border-top: none; padding-top: 0; }
+        .settings-label { font-size: 13.5px; color: var(--text-primary); }
+        .settings-label small { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+        .settings-input {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--input-border);
+            background: var(--input-bg);
+            color: var(--text-primary);
+            font-size: 13.5px;
+            font-family: inherit;
+            transition: border-color .2s ease, box-shadow .2s ease;
+        }
+        .settings-input:focus {
+            outline: none;
+            border-color: #4a90e2;
+            box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.18);
+        }
+        .settings-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .settings-status {
+            margin-top: 14px;
+            font-size: 12.5px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            word-break: break-all;
+        }
+        .settings-status .warn { color: #f44336; }
+        .settings-status .ok { color: #2e7d32; }
+        @media (max-width: 700px) {
+            .settings-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <nav class="nav-menu">
+                <a href="idx.html" class="nav-item">
+                    <span>实时识别</span>
+                </a>
+                <a href="manager.html" class="nav-item">
+                    <span>仓库管理</span>
+                </a>
+                <a href="console.html" class="nav-item">
+                    <span>控制台</span>
+                </a>
+                <a href="settings.html" class="nav-item active">
+                    <span>场地设置</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button id="themeToggle" class="sidebar-btn">
+                    <span>切换主题</span>
+                </button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <h1>场地设置</h1>
+            </header>
+
+            <div class="settings-stack">
+                <section class="settings-card">
+                    <h3>计费</h3>
+                    <p class="settings-desc">金额与时长始终由服务端计算，这里改的是计算所用的参数。</p>
+                    <div class="settings-row">
+                        <label class="settings-label" for="billingRate">
+                            计费单价
+                            <small>元 / 分钟。不足一分钟不计费。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="billingRate" step="0.01" min="0" max="1000">
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="maxSession">
+                            单次计费上限
+                            <small>分钟。防止异常数据产生天价账单。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="maxSession" step="1" min="1">
+                    </div>
+                </section>
+
+                <section class="settings-card">
+                    <h3>会话</h3>
+                    <p class="settings-desc">暂离不结算、不推进计费起点；超时未归会自动签退结算。</p>
+                    <div class="settings-row">
+                        <label class="settings-label" for="awayTimeout">
+                            暂离超时
+                            <small>分钟。超过则自动签退结算。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="awayTimeout" step="1" min="1" max="1440">
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="checkinDebounce">
+                            签到去抖
+                            <small>秒。同一张脸在该窗口内的重复识别只触发一次。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="checkinDebounce" step="1" min="0" max="300">
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="checkoutDebounce">
+                            签退去抖
+                            <small>秒。同上，作用于暂离 / 签退。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="checkoutDebounce" step="1" min="0" max="300">
+                    </div>
+                </section>
+
+                <section class="settings-card">
+                    <h3>识别阈值</h3>
+                    <p class="settings-desc">识别阈值需要在真实人脸数据上标定，改小会更容易认错人。</p>
+                    <div class="settings-row">
+                        <label class="settings-label" for="recognizeThreshold">
+                            身份识别阈值
+                            <small>0~1。越大越严格。默认 0.75。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="recognizeThreshold" step="0.01" min="0.01" max="1">
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="faceConfThreshold">
+                            人脸检测置信度
+                            <small>0~1。OpenCV 推荐 0.5，调高会大量漏检。</small>
+                        </label>
+                        <input class="settings-input" type="number" id="faceConfThreshold" step="0.01" min="0.01" max="1">
+                    </div>
+                </section>
+
+                <section class="settings-card">
+                    <h3>保存</h3>
+                    <p class="settings-desc">改动立刻生效（无需重启），同时写回 .env 以便重启后保留。</p>
+                    <div class="settings-actions">
+                        <button id="saveBtn" class="btn btn-primary">保存设置</button>
+                        <button id="reloadBtn" class="btn btn-outline">重新读取</button>
+                    </div>
+                    <div id="settingsStatus" class="settings-status">正在读取…</div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="settings.js"></script>
+</body>
+</html>

@@ -1,13 +1,7 @@
-"""全局异常处理。
+# """架构作用：将领域、校验、HTTP与未知异常统一映射为JSON响应"""
+"""全局异常处理
 
-相对旧版的修复
---------------
-旧版在 ``app/main.py`` 里写了一个 ``@app.exception_handler(Exception)``，
-内部又是 ``if isinstance(exc, HTTPException): raise exc`` —— 在 async 处理器里
-裸 ``raise`` 会污染异常栈，而且请求体校验失败（422）走的是另一条路径，
-最终前端拿到的错误结构完全不统一。
-
-现在按异常类型分别注册处理器，统一输出::
+按异常类型分别注册处理器，统一输出::
 
     {"detail": "...", "code": "...", "request_id": "...", "details": {...}}
 """
@@ -23,6 +17,7 @@ from app.core.errors import AppError
 from app.logger import logger, new_request_id
 
 
+# """辅助函数：组装统一错误响应体，可选附加字段详情"""
 def _payload(detail: str, code: str, *, details: dict | None = None, request_id: str = "-") -> dict:
     body: dict[str, object] = {"detail": detail, "code": code, "request_id": request_id}
     if details:
@@ -30,12 +25,14 @@ def _payload(detail: str, code: str, *, details: dict | None = None, request_id:
     return body
 
 
+# """辅助函数：复用请求中间件写入的ID，缺失时生成备用ID"""
 def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", None) or new_request_id()
 
 
+# """函数：按异常类别注册处理器，记录必要日志并返回规范JSON"""
 def register_exception_handlers(app: FastAPI) -> None:
-    """注册全部异常处理器。"""
+    """注册全部异常处理器"""
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
@@ -49,8 +46,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             exc.message,
         )
         headers = {}
-        if exc.status_code == 401:
-            headers["WWW-Authenticate"] = "Bearer"
         return JSONResponse(
             status_code=exc.status_code,
             content=exc.to_payload(rid),
@@ -62,7 +57,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         rid = _request_id(request)
-        # 把 pydantic 的错误整理成前端友好的「字段 -> 说明」
+        # 把pydantic的错误整理成前端友好的「字段 -> 说明」
         fields: dict[str, str] = {}
         for error in exc.errors():
             location = ".".join(str(part) for part in error.get("loc", ()) if part != "body")
@@ -102,3 +97,4 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 
 __all__ = ["register_exception_handlers"]
+

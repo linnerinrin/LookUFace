@@ -1,21 +1,16 @@
-"""应用配置。
+# """模块：应用配置"""
+# """架构作用：加载环境设置，校验参数并派生资源路径"""
+"""应用配置
 
-设计要点（相对旧版 ``app/config.py`` 的修复）：
-
-1. ``env_file`` 使用**绝对路径**，无论从哪个工作目录启动都能读到 ``.env``。
-   旧版 ``env_file=".env"`` 是相对路径，从项目根目录之外启动会直接抛
-   ``ValidationError: 17 validation errors``。
-2. 所有非敏感字段都带**默认值**，缺少 ``.env`` 也不会崩；只有凭据类字段
-   （``SECRET_KEY``）强制要求，并在校验器里拒绝弱值。
-3. SQLite 相对路径统一解析到项目根目录，保证数据库文件位置可预期。
-4. 业务参数（去抖时长、暂离超时、计费单价、单次计费上限）进入配置，
-   不再散落在代码里的魔法数（旧版 ``rate_per_minute = 0.5`` 写在函数体内）。
+**安全边界**：系统**没有任何身份校验**，因此 ``HOST`` 默认 ``127.0.0.1``，
+只监听本机。仅在完全可信的内网里、并且明确接受「任何人都能读写人脸库与结算
+账单」这一后果时，才应改成 ``0.0.0.0``
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,21 +18,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # app/config.py -> app/ -> 项目根目录
 BASE_DIR: Path = Path(__file__).resolve().parent.parent
 
-# 弱密钥黑名单：旧版 .env 里的硬编码值必须被拒绝
-_INSECURE_SECRET_MARKERS = (
-    "lookuface-sk-",
-    "changeme",
-    "secret",
-    "your-secret",
-)
-_MIN_SECRET_LENGTH = 32
+#: ``.env`` 的位置。既用于读取配置，也用于「场地设置」页的落盘
+#:
+#: 可用环境变量 ``LOOKUFACE_ENV_FILE`` 覆盖 —— 测试必须这么做，
+#: 否则「保存设置」的往返用例会把开发者的真实 ``.env`` 改掉
+ENV_FILE: Path = Path(
+    os.environ.get("LOOKUFACE_ENV_FILE", str(BASE_DIR / ".env"))
+).expanduser()
 
 
 class Settings(BaseSettings):
-    """全局配置。字段名即环境变量名（大小写不敏感）。"""
+    """全局配置。字段名即环境变量名（大小写不敏感）"""
 
     model_config = SettingsConfigDict(
-        env_file=str(BASE_DIR / ".env"),
+        env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -45,16 +39,15 @@ class Settings(BaseSettings):
 
     # ---------------- 应用 ----------------
     APP_NAME: str = "CV Face Analysis Service"
-    APP_VERSION: str = "1.1.0"
+    APP_VERSION: str = "1.2.0"
     DEBUG: bool = False
     HOST: str = "127.0.0.1"
     PORT: int = 8835
     LOG_LEVEL: str = "INFO"
 
-    # CORS：默认仅本机，避免旧版默认 "*" + credentials 的不安全组合。
-    # 注意：这里必须与 PORT 保持一致 —— 用 http://127.0.0.1:8835 打开页面时，
-    # 页面对同源 API 的请求会带 Origin 头；若允许列表里没有该端口，
-    # 中间件会按跨源拒绝，浏览器表现为 "Failed to fetch"。
+    # CORS：默认仅本机。注意：这里必须与PORT保持一致 —— 用
+    # http://127.0.0.1:8835打开页面时，页面对同源API的请求会带Origin头；
+    # 若允许列表里没有该端口，中间件会按跨源拒绝，浏览器表现为 "Failed to fetch"
     ALLOWED_ORIGINS: str = "http://127.0.0.1:8835,http://localhost:8835"
 
     # ---------------- 路径 ----------------
@@ -76,22 +69,8 @@ class Settings(BaseSettings):
     # ---------------- 数据库 ----------------
     DATABASE_URL: str = "sqlite:///./storage/face_lens.db"
 
-    # ---------------- 认证 ----------------
-    SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=10080, gt=0)
-    EMAIL_CODE_TTL_MINUTES: int = Field(default=10, gt=0, le=60)
-    EMAIL_CODE_CLEANUP_INTERVAL_SECONDS: int = Field(default=3600, gt=0)
-
-    # ---------------- 邮件 ----------------
-    SMTP_HOST: str = "smtp.qq.com"
-    SMTP_PORT: int = Field(default=587, gt=0, lt=65536)
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_ENABLED: bool = True
-
     # ---------------- 视觉阈值 ----------------
-    # OpenCV DNN 人脸检测置信度。旧版 0.925 过高导致大量漏检，默认回到 0.5
+    # OpenCV DNN人脸检测置信度，默认0.5
     FACE_CONF_THRESHOLD: float = Field(default=0.5, gt=0, le=1)
     # 余弦相似度阈值
     RECOGNIZE_THRESHOLD: float = Field(default=0.75, gt=0, le=1)
@@ -107,7 +86,7 @@ class Settings(BaseSettings):
 
     # ---------------- 业务/计费 ----------------
     MAX_FILE_SIZE: int = Field(default=10 * 1024 * 1024, gt=0)
-    # 同一张脸在该时长内的连续识别只触发一次业务动作（替代旧版帧计数去抖）
+    # 同一张脸在该时长内的连续识别只触发一次业务动作
     CHECKIN_DEBOUNCE_SECONDS: int = Field(default=5, ge=0, le=300)
     CHECKOUT_DEBOUNCE_SECONDS: int = Field(default=5, ge=0, le=300)
     # 暂离超时：超时自动签退结算
@@ -118,29 +97,7 @@ class Settings(BaseSettings):
     MAX_SESSION_MINUTES: int = Field(default=1440, gt=0)
 
     # ---------------- 校验 ----------------
-    @field_validator("SECRET_KEY")
-    @classmethod
-    def _validate_secret_key(cls, value: str) -> str:
-        value = (value or "").strip()
-        if not value:
-            raise ValueError(
-                "SECRET_KEY 未配置。请在 .env 中设置，"
-                '生成方式：python -c "import secrets; print(secrets.token_urlsafe(64))"'
-            )
-        lowered = value.lower()
-        for marker in _INSECURE_SECRET_MARKERS:
-            if marker in lowered:
-                raise ValueError(
-                    f"SECRET_KEY 包含已知弱值标记 {marker!r}，任何知道该值的人都能伪造 JWT。"
-                    '请更换为随机值：python -c "import secrets; print(secrets.token_urlsafe(64))"'
-                )
-        if len(value) < _MIN_SECRET_LENGTH:
-            raise ValueError(
-                f"SECRET_KEY 长度不足 {_MIN_SECRET_LENGTH}（当前 {len(value)}），"
-                "熵过低易被暴力破解。"
-            )
-        return value
-
+    # 校验LOG_LEVEL合法值，非法输入在启动阶段直接报错
     @field_validator("LOG_LEVEL")
     @classmethod
     def _validate_log_level(cls, value: str) -> str:
@@ -150,9 +107,10 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL 必须是 {sorted(allowed)} 之一，当前为 {value!r}")
         return upper
 
+    # 后置校验：解析并创建运行目录，缓存派生路径供属性复用
     @model_validator(mode="after")
     def _resolve_paths(self) -> Settings:
-        """把相对路径统一解析到项目根目录，并保证运行时目录存在。"""
+        """把相对路径统一解析到项目根目录，并保证运行时目录存在"""
         self.BASE_DIR = Path(self.BASE_DIR).resolve()
 
         for name in ("MODEL_DIR", "LOG_DIR", "UPLOAD_DIR", "STORAGE_DIR", "STATIC_DIR"):
@@ -161,16 +119,12 @@ class Settings(BaseSettings):
             setattr(self, name, resolved.resolve())
 
         self.DATABASE_URL = self._resolve_database_url(self.DATABASE_URL)
-
-        # SMTP 未配置完整时静默降级为「控制台打印验证码」，便于本地开发
-        if not (self.SMTP_USER and self.SMTP_PASSWORD):
-            object.__setattr__(self, "SMTP_ENABLED", False)
-
         return self
 
+    # 把sqlite:/// 相对路径解析为项目根下的绝对路径
     @staticmethod
     def _resolve_database_url(url: str) -> str:
-        """把 sqlite 相对路径锚定到项目根目录。"""
+        """把sqlite相对路径锚定到项目根目录"""
         prefix = "sqlite:///"
         if not url.startswith(prefix):
             return url
@@ -183,55 +137,73 @@ class Settings(BaseSettings):
         return f"{prefix}{path.resolve().as_posix()}"
 
     # ---------------- 派生路径 ----------------
+    # .env文件位置，配置落盘与reload的目标
+    @property
+    def env_file_path(self) -> Path:
+        """正在使用的 ``.env`` 路径（「场地设置」页写回同一个文件）"""
+        return ENV_FILE
+
+    # OpenCV人脸检测网络的结构文件路径
     @property
     def face_proto_path(self) -> Path:
         return self.MODEL_DIR / self.FACE_PROTO
 
+    # 人脸检测网络的权重文件路径
     @property
     def face_model_path(self) -> Path:
         return self.MODEL_DIR / self.FACE_MODEL
 
+    # 年龄推理网络的结构文件路径
     @property
     def age_proto_path(self) -> Path:
         return self.MODEL_DIR / self.AGE_PROTO
 
+    # 年龄推理网络的权重文件路径
     @property
     def age_model_path(self) -> Path:
         return self.MODEL_DIR / self.AGE_MODEL
 
+    # 性别推理网络的结构文件路径
     @property
     def gender_proto_path(self) -> Path:
         return self.MODEL_DIR / self.GENDER_PROTO
 
+    # 性别推理网络的权重文件路径
     @property
     def gender_model_path(self) -> Path:
         return self.MODEL_DIR / self.GENDER_MODEL
 
+    # 人脸注册截图目录，由storage写入、路由读取
     @property
     def screenshot_dir(self) -> Path:
         return self.STORAGE_DIR / "screenshots"
 
+    # 上传临时目录，保存解码前的原始字节
     @property
     def temp_upload_dir(self) -> Path:
         return self.UPLOAD_DIR / "temp"
 
+    # 二维码PNG输出目录，每次报价生成新文件
     @property
     def qrcode_dir(self) -> Path:
-        """计费二维码目录。旧版放在系统临时目录，容器/多实例下不可预期。"""
+        """计费二维码目录"""
         return self.STORAGE_DIR / "qrcodes"
 
+    # 解析逗号分隔的CORS允许源并去空
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
+    # 通配源与credentials互斥，避免浏览器拒绝该组合
     @property
     def cors_allow_credentials(self) -> bool:
-        """通配符来源 + credentials 是无效组合，此时关闭 credentials。"""
+        """通配符来源 + credentials是无效组合，此时关闭credentials"""
         origins = self.allowed_origins_list
         return "*" not in origins
 
+    # 健康预检使用的模型文件清单（名称到路径）
     def required_model_files(self) -> dict[str, Path]:
-        """返回启动时需要存在的模型文件，用于一次性预检。"""
+        """返回启动时需要存在的模型文件，用于一次性预检"""
         return {
             "face_proto": self.face_proto_path,
             "face_model": self.face_model_path,
@@ -241,25 +213,26 @@ class Settings(BaseSettings):
             "gender_model": self.gender_model_path,
         }
 
+    # 启动时确保运行目录存在，缺失则创建
     def ensure_runtime_dirs(self) -> None:
         for path in (self.LOG_DIR, self.STORAGE_DIR, self.screenshot_dir,
                      self.qrcode_dir, self.UPLOAD_DIR, self.temp_upload_dir):
             path.mkdir(parents=True, exist_ok=True)
 
 
+# 将环境配置加载失败转换为明确的启动退出信息
 def _load_settings() -> Settings:
-    """加载配置，把 pydantic 的报错转成人能看懂的一句话。"""
+    """加载配置，把pydantic的报错转成人能看懂的一句话"""
     try:
         return Settings()  # type: ignore[call-arg]
     except Exception as exc:  # pragma: no cover - 启动期路径
         raise SystemExit(
-            f"\n[配置错误] 无法加载 {BASE_DIR / '.env'}\n"
+            f"\n[配置错误] 无法加载 {ENV_FILE}\n"
             f"{exc}\n\n"
-            "提示：复制 .env.example 为 .env 并填写 SECRET_KEY、SMTP_PASSWORD。\n"
-            '生成密钥：python -c "import secrets; print(secrets.token_urlsafe(64))"\n'
+            "提示：复制 .env.example 为 .env（所有字段都有默认值，通常无需改动）。\n"
         ) from exc
 
 
 settings = _load_settings()
 
-__all__ = ["Settings", "settings", "BASE_DIR"]
+__all__ = ["Settings", "settings", "BASE_DIR", "ENV_FILE"]

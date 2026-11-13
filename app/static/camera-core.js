@@ -1,22 +1,10 @@
 /**
  * camera-core.js —— 摄像头页面的公共实现
  *
- * 引入背景（旧版问题）：
- *  1. in.js 与 out.js 约 60% 代码逐行重复（resizeCanvas / drawFaces /
- *     startCamera / captureAndSend / startCaptureLoop / 录制 / 主题），
- *     任何修复都要改两遍，且两份逻辑已经开始漂移。
- *  2. **每帧发包**：旧版 updateResults 在每一帧（约 10 fps）里对每张已识别
- *     人脸都发一次 /check/checkin，出口页更是一次 /check/status + 一次
- *     /check/checkout。单人使用即产生 20~30 次 HTTP 请求与数据库写入/秒。
- *  3. **业务判定放在前端**：是否暂离、是否签退由 JS 用帧计数（30 帧）猜测，
- *     触发时间在 3~15 秒之间浮动，不可预测。
- *  4. 旧版用 alert() 弹业务结果，持续识别时会连续弹窗。
- *
- * 现在：
  *  - 业务动作全部由服务端完成（见 app/services/frame_pipeline.py），
- *    前端只负责渲染服务端返回的 actions，**不再发任何业务请求**；
- *  - DOM 写入按帧节流，避免每帧重排；
- *  - 业务提示改用页内提示条，不再弹 alert。
+ *    前端只负责渲染服务端返回的 actions，不发任何业务请求
+ *  - DOM 写入按帧节流
+ *  - 业务提示使用页内提示条
  */
 (function (window, document) {
     'use strict';
@@ -26,11 +14,11 @@
         throw new Error('camera-core.js 依赖 api.js，请先引入 api.js');
     }
 
-    /** 帧发送间隔（毫秒）。服务端有背压，这里控制上游发送节奏。 */
+    /** 帧发送间隔（毫秒），控制上游发送节奏 */
     var SEND_INTERVAL_MS = 150;
-    /** DOM 渲染节流间隔（毫秒）。 */
+    /** DOM 渲染节流间隔（毫秒） */
     var RENDER_INTERVAL_MS = 300;
-    /** 心跳间隔（毫秒）。用于探测僵死连接。 */
+    /** 心跳间隔（毫秒），用于探测僵死连接 */
     var HEARTBEAT_MS = 20000;
 
     function CameraApp(options) {
@@ -98,31 +86,8 @@
         if (this.registerBtn) {
             this.registerBtn.addEventListener('click', function () { self.registerCurrentFace(); });
         }
-        var overlayLoginBtn = document.getElementById('overlayLoginBtn');
-        if (overlayLoginBtn) {
-            overlayLoginBtn.addEventListener('click', function () {
-                if (typeof window.parent.showLoginModal === 'function') {
-                    window.parent.showLoginModal();
-                }
-            });
-        }
-
-        window.addEventListener('storage', function (event) {
-            if (event.key === 'token' || event.key === 'user') self.checkLoginStatus();
-        });
-        window.addEventListener('lookuface:auth-changed', function () { self.checkLoginStatus(); });
-
         // 主题：接收父页面广播
         LF.theme.bindInFrame();
-
-        this.checkLoginStatus();
-    };
-
-    CameraApp.prototype.checkLoginStatus = function () {
-        var loggedIn = LF.auth.isLoggedIn();
-        var overlay = document.getElementById('loginOverlay');
-        if (overlay) overlay.style.display = loggedIn ? 'none' : 'flex';
-        if (this.startBtn && !this.isRunning) this.startBtn.disabled = !loggedIn;
     };
 
     // ------------------------------------------------------------------ //
@@ -138,19 +103,8 @@
     };
 
     /**
-     * 计算一个 bbox 在**画布坐标系**中的矩形。
-     *
-     * 坐标系说明（这里曾经算错，导致识别框和人脸左右镜像）：
-     *
-     *   1. ``<video>`` 在 CSS 里被 ``transform: scaleX(-1)`` 镜像显示，
-     *      所以用户看到的画面是「摄像头原始画面的水平翻转」。
-     *   2. ``captureAndSend`` 发送前也把帧做了水平翻转，
-     *      因此**服务端看到的就是用户看到的画面**。
-     *   3. 于是服务端返回的 bbox 已经是显示空间的坐标，
-     *      直接按原值画到覆盖层上即可 —— 不能再翻一次。
-     *
-     * 之前的实现又做了一次 ``videoWidth - x2``，等于翻了两次，
-     * 结果框的位置与人脸左右相反。
+     * 把 bbox 转为画布坐标矩形
+     * 服务端返回的 bbox 已是显示空间坐标（发送的帧做过水平镜像），直接按原值使用
      */
     CameraApp.prototype.computeBoxRect = function (bbox) {
         return {
@@ -291,12 +245,6 @@
 
     CameraApp.prototype.connect = function () {
         var self = this;
-        if (!LF.auth.isLoggedIn()) {
-            LF.toast('请先登录', true);
-            if (this.startBtn) this.startBtn.disabled = false;
-            return;
-        }
-
         this.startCamera().then(function (ok) {
             if (!ok) {
                 if (self.startBtn) self.startBtn.disabled = false;
@@ -305,8 +253,7 @@
             }
 
             var protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-            var url = protocol + window.location.host + self.wsPath +
-                '?token=' + encodeURIComponent(LF.auth.getToken() || '');
+            var url = protocol + window.location.host + self.wsPath;
 
             self.ws = new window.WebSocket(url);
 
@@ -328,11 +275,6 @@
             };
 
             self.ws.onclose = function (event) {
-                if (event && event.code === 1008) {
-                    LF.toast('未认证或登录已过期，请重新登录', true);
-                    LF.auth.clearSession();
-                    self.checkLoginStatus();
-                }
                 self.disconnect();
             };
 
@@ -408,7 +350,7 @@
 
         this.drawFaces(data.faces);
 
-        // 业务动作由服务端产生，前端只展示（不再弹 alert）
+        // 业务动作由服务端产生，前端只展示
         if (data.actions && data.actions.length) {
             for (var i = 0; i < data.actions.length; i++) {
                 LF.toast(data.actions[i], false);
@@ -462,11 +404,6 @@
 
         var name = this.registerName.value.trim();
         if (!name) { LF.toast('请输入姓名', true); return; }
-        if (!LF.auth.isLoggedIn()) {
-            LF.toast('请先登录后再注册人脸', true);
-            if (typeof window.parent.showLoginModal === 'function') window.parent.showLoginModal();
-            return;
-        }
         if (!this.isRunning) { LF.toast('请先点击「开始识别」', true); return; }
 
         var width = this.video.videoWidth || 640;
@@ -476,12 +413,7 @@
         canvas.height = height;
         var ctx = canvas.getContext('2d');
 
-        // 与 captureAndSend 保持一致：先水平镜像再取帧。
-        //
-        // 原因：识别链路上发送给服务端的帧是镜像过的，而 <video> 也是镜像显示的，
-        // 所以只要「发送/截取的画面」与「用户所见」方向一致，识别结果与参考截图
-        // 才都是用户视角。此前这里截的是未镜像的原始帧，
-        // 导致存下来的注册截图与界面里看到的方向左右相反。
+        // 与 captureAndSend 保持一致：先水平镜像再取帧
         ctx.save();
         ctx.translate(width, 0);
         ctx.scale(-1, 1);

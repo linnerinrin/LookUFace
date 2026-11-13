@@ -109,14 +109,24 @@ def load_dnn_net(model_path: Path, config_path: Path, label: str) -> Any:
     return net
 
 
+# 模型预检缓存：启动时lifespan首次调用即计算并缓存，health接口复用结果
+_preflight_cache: dict[str, bool] | None = None
+
+
 # """函数：遍历必需模型文件，做存在性+可读性+非空完整性检查并汇总"""
-def preflight() -> dict[str, bool]:
+def preflight(force: bool = False) -> dict[str, bool]:
     """启动期模型预检，返回每个文件的就绪状态
 
     校验三个层次：文件存在、进程可读、内容非空
+    结果带进程级缓存：首次调用（启动lifespan）计算，后续直接返回缓存；
+    传 ``force=True`` 重新校验
     不在缺失时直接崩溃，而是把状态交给调用方决定（health接口会暴露出来）
     注意：这是文件级预检，真正的加载就绪状态见 ``load_readiness()``
     """
+    global _preflight_cache
+    if _preflight_cache is not None and not force:
+        return dict(_preflight_cache)
+
     result: dict[str, bool] = {}
     for label, path in settings.required_model_files().items():
         ok = False
@@ -134,7 +144,8 @@ def preflight() -> dict[str, bool]:
         logger.warning("有 %d 个模型文件不可用，相关功能不可用：%s", len(missing), ", ".join(missing))
     else:
         logger.info("全部 %d 个模型文件校验通过", len(result))
-    return result
+    _preflight_cache = result
+    return dict(result)
 
 
 # """函数：报告各模型子类的实际加载就绪状态（是否已构建实例）"""

@@ -1,21 +1,10 @@
 /**
  * api.js —— 前端公共基础设施（认证、请求、提示、主题）
  *
- * 引入背景（旧版问题）：
- *  1. 旧版把 `const API_BASE = '/api/v1'` 写在 auth.js 里，靠「所有页面都继承
- *     auth.js」这一隐式约定工作，任何漏引 auth.js 的页面（如 iframe）都会
- *     在运行时抛 `ReferenceError: API_BASE is not defined`。
- *  2. 每个页面各写一遍 fetch + 手动拼 Authorization + 手动判断 401，
- *     错误处理四处漂移。
- *  3. 旧版 auth.js 劫持了 console.log/warn/error 并**无条件**上报服务端，
- *     页面里任何调试输出都会变成服务端日志噪声（实测 manager.js 的调试
- *     输出把日志刷满）。
- *
  * 本文件提供：
- *  - `LookUFace.api`   统一请求封装（自动带 token、统一错误、401 自动登出）
- *  - `LookUFace.auth`  登录态读写（localStorage + 跨页广播）
- *  - `LookUFace.toast` 统一提示（替代散落的 alert）
- *  - `LookUFace.log`   显式日志上报（仅 error/warn 上报，杜绝噪声）
+ *  - `LookUFace.api`   统一请求封装（统一错误、网络诊断）
+ *  - `LookUFace.toast` 统一提示
+ *  - `LookUFace.log`   显式日志上报（仅 error/warn 上报）
  *  - `LookUFace.theme` 主题读写与跨 iframe 同步
  */
 (function (window, document) {
@@ -38,67 +27,6 @@
     }
 
     // ------------------------------------------------------------------ //
-    // 认证态
-    // ------------------------------------------------------------------ //
-
-    var auth = {
-        TOKEN_KEY: 'token',
-        USER_KEY: 'user',
-
-        getToken: function () {
-            try { return window.localStorage.getItem(this.TOKEN_KEY); } catch (e) { return null; }
-        },
-
-        getUser: function () {
-            try {
-                var raw = window.localStorage.getItem(this.USER_KEY);
-                return raw ? JSON.parse(raw) : null;
-            } catch (e) { return null; }
-        },
-
-        isLoggedIn: function () {
-            return !!(this.getToken() && this.getUser());
-        },
-
-        setSession: function (token, user) {
-            try {
-                window.localStorage.setItem(this.TOKEN_KEY, token);
-                window.localStorage.setItem(this.USER_KEY, JSON.stringify(user));
-            } catch (e) { /* 隐私模式下可能失败，忽略 */ }
-            this._broadcast();
-        },
-
-        clearSession: function () {
-            var previous = this.getToken();
-            try {
-                window.localStorage.removeItem(this.TOKEN_KEY);
-                window.localStorage.removeItem(this.USER_KEY);
-            } catch (e) { /* ignore */ }
-            this._broadcast(previous);
-        },
-
-        /** 通知同源的其他页面（含 iframe）登录态已变化。 */
-        _broadcast: function (oldValue) {
-            try {
-                window.dispatchEvent(new StorageEvent('storage', {
-                    key: this.TOKEN_KEY,
-                    oldValue: oldValue || null,
-                    newValue: this.getToken()
-                }));
-            } catch (e) {
-                // 某些浏览器不允许手工构造 StorageEvent，退化为直接派发自定义事件
-                window.dispatchEvent(new CustomEvent('lookuface:auth-changed'));
-            }
-        },
-
-        displayName: function () {
-            var user = this.getUser();
-            if (!user) return '用户';
-            return user.nickname || (user.email ? user.email.split('@')[0] : '用户');
-        }
-    };
-
-    // ------------------------------------------------------------------ //
     // 请求封装
     // ------------------------------------------------------------------ //
 
@@ -116,15 +44,8 @@
     // ------------------------------------------------------------------ //
 
     /**
-     * fetch 在 HTTP 层面失败时抛出的错误。
-     *
-     * 浏览器原文（"Failed to fetch" / "NetworkError..."）无法区分下面几种完全
-     * 不同的原因，而它们的处理方式截然相反：
-     *   1. 服务没启动 / 地址或端口不对
-     *   2. 浏览器代理指向了一个不可用的代理（本机实测过这种情况）
-     *   3. CORS 预检被拒（访问地址的 Origin 不在服务端白名单）
-     *   4. 服务端崩溃或连接被重置
-     * 因此这里在失败时立刻对同源的 /health 做一次探测，把结论写进 hint。
+     * fetch 在 HTTP 层面失败时抛出的错误
+     * 失败时对同源 /health 做一次探测，把结论写进 hint
      */
     function NetworkError(cause, url) {
         this.name = 'NetworkError';
@@ -137,7 +58,7 @@
     }
     NetworkError.prototype = Object.create(Error.prototype);
 
-    /** 探测同源连通性，返回面向用户的诊断结论。 */
+    /** 探测同源连通性，返回面向用户的诊断结论 */
     function diagnoseConnectivity() {
         var healthUrl = BASE + '/health';
 
@@ -195,7 +116,7 @@
         });
     }
 
-    /** 把诊断结论附加到错误对象上（供提示框展示）。 */
+    /** 把诊断结论附加到错误对象上（供提示框展示） */
     function attachDiagnosis(err) {
         if (!(err instanceof NetworkError)) return Promise.resolve(err);
         return diagnoseConnectivity().then(function (hint) {
@@ -206,16 +127,13 @@
     }
 
     /**
-     * 公开的连通性探测，供页面上的「重新检测」按钮调用。
-     *
-     * 复用 diagnoseConnectivity 而不去请求业务接口 —— 后者在服务不可达时
-     * 同样只会 reject，徒增一次失败。
+     * 公开的连通性探测，供页面上的「重新检测」按钮调用
      */
     function probeConnectivity() {
         return diagnoseConnectivity();
     }
 
-    /** 服务不可达时在页面顶部显示一条可复制的诊断横幅。 */
+    /** 服务不可达时在页面顶部显示一条可复制的诊断横幅 */
     var _diagBannerId = 'lfConnDiag';
 
     function showConnectivityBanner(hint) {
@@ -277,20 +195,15 @@
     }
 
     /**
-     * 统一请求。
+     * 统一请求
      * @param {string} path   形如 '/faces' 或 '/sessions/checkin'
-     * @param {object} [opts] { method, body, form, raw, signal, skipAuthRedirect }
+     * @param {object} [opts] { method, body, form, raw, signal }
      */
     function request(path, opts) {
         opts = opts || {};
         var url = path.indexOf('http') === 0 ? path : BASE + path;
         var headers = Object.assign({}, opts.headers || {});
         var init = { method: opts.method || 'GET', headers: headers };
-
-        var token = auth.getToken();
-        if (token && !opts.skipAuth) {
-            headers['Authorization'] = 'Bearer ' + token;
-        }
 
         if (opts.form) {
             init.body = opts.form;            // FormData：不要设置 Content-Type
@@ -315,11 +228,6 @@
                     return data === null ? {} : data;
                 }
 
-                if (response.status === 401 && !opts.skipAuthRedirect) {
-                    auth.clearSession();
-                    window.dispatchEvent(new CustomEvent('lookuface:unauthorized'));
-                }
-
                 // 统一错误结构：{detail, code, request_id, details?}
                 var message = (data && data.detail) || '请求失败（HTTP ' + response.status + '）';
                 if (data && data.details && typeof data.details === 'object') {
@@ -331,14 +239,11 @@
                 throw new ApiError(message, response.status, data && data.code, data && data.details);
             });
         }).catch(function (err) {
-            // 网络层失败：fetch 直接 reject，浏览器只给一句
-            // "Failed to fetch" / "NetworkError when attempting to fetch resource"。
-            // 这句话对用户毫无帮助，因此这里补一次连通性探测，给出可操作的结论。
+            // 网络层失败：包装为 NetworkError 并补一次连通性探测
             if (err instanceof ApiError) throw err;   // 业务错误原样抛出
 
             return attachDiagnosis(new NetworkError(err, url)).then(function (netErr) {
-                // 除了角标提示，再显示一条可复制、可重试的完整诊断横幅 ——
-                // 否则用户只会看到 "Failed to fetch" 这一句无从下手的话。
+                // 显示可复制的完整诊断横幅
                 try { showConnectivityBanner(netErr.hint); } catch (e) { /* ignore */ }
                 throw netErr;
             });
@@ -358,8 +263,8 @@
         post: function (path, body, opts) { return request(path, Object.assign({ method: 'POST', body: body }, opts)); },
         put: function (path, body, opts) { return request(path, Object.assign({ method: 'PUT', body: body }, opts)); },
         del: function (path, body, opts) {
-            // DELETE 带 body 不是所有代理都支持，优先用查询串或 POST 变体；
-            // 本项目后端 DELETE /faces/{name} 用路径参数，无需 body。
+            // DELETE 带 body 不是所有代理都支持，优先用查询串或 POST 变体
+            // 本项目后端 DELETE /faces/{name} 用路径参数，无需 body
             return request(path, Object.assign({ method: 'DELETE', body: body }, opts));
         },
         upload: function (path, formData, opts) {
@@ -414,11 +319,11 @@
     }
 
     // ------------------------------------------------------------------ //
-    // 日志上报（显式调用，不再劫持 console）
+    // 日志上报（显式调用）
     // ------------------------------------------------------------------ //
 
     var log = {
-        /** 页面标识，用于服务端日志分类。 */
+        /** 页面标识，用于服务端日志分类 */
         page: function () {
             var name = window.location.pathname.split('/').pop();
             return name || 'unknown';
@@ -444,7 +349,7 @@
         warn: function (message) { this.send('warn', message); }
     };
 
-    // 兜底捕获未处理错误与 Promise 拒绝（这才是真正需要的上报）
+    // 兜底捕获未处理错误与 Promise 拒绝
     window.addEventListener('error', function (event) {
         if (event && event.message) {
             log.error(event.message + ' (' + (event.filename || '?') + ':' + (event.lineno || '?') + ')');
@@ -486,7 +391,7 @@
             return next;
         },
 
-        /** iframe 内调用：接收父页面的主题广播并按需回传。 */
+        /** iframe 内调用：接收父页面的主题广播并按需回传 */
         bindInFrame: function () {
             var self = this;
             self.init();
@@ -507,7 +412,6 @@
 
     window.LookUFace = {
         api: api,
-        auth: auth,
         toast: toast,
         log: log,
         theme: theme,
@@ -516,6 +420,4 @@
 
     // 向后兼容旧页面里散落的 API_BASE 引用
     window.API_BASE = BASE;
-    // 兼容旧的 getCurrentUser()
-    window.getCurrentUser = function () { return auth.getUser(); };
 })(window, document);

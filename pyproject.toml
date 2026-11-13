@@ -11,11 +11,6 @@ requires-python = ">=3.10,<3.13"
 license = { text = "Proprietary" }
 authors = [{ name = "LookUFace" }]
 
-# 说明：
-#  - 保留 mediapipe==0.10.9（0.10.9 之后版本未提供 Windows/py3.11 wheel 的稳定组合）
-#  - 显式声明 opencv-contrib-python：mediapipe 运行时依赖它，原 requirements.txt 遗漏
-#  - 移除 bcrypt：passlib 1.7.4 与 bcrypt>=4.1 不兼容（bcrypt.__about__ 已删除），
-#    且本项目密码哈希统一使用 pbkdf2_sha256（见 app/services/security.py）
 dependencies = [
     "fastapi>=0.115,<0.140",
     "uvicorn[standard]>=0.24,<0.40",

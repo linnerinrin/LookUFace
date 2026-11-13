@@ -1,4 +1,6 @@
-"""人脸库路由。"""
+# """模块：人脸库管理与上传分析"""
+# """架构作用：连接上传解码、特征提取、数据库记录和截图存储"""
+"""人脸库路由（单租户，无身份校验）"""
 
 from __future__ import annotations
 
@@ -8,10 +10,9 @@ from datetime import datetime
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import DbSession
 from app.api.schemas import (
     DetectResponse,
-    FaceDeleteRequest,
     FaceDeleteResponse,
     FaceInfo,
     FaceModifyResponse,
@@ -25,14 +26,16 @@ from app.core.errors import AppError, FaceQualityError, NotFoundError, Validatio
 from app.db.repository import delete_face, get_face, list_faces, rename_face, upsert_face
 from app.logger import logger
 from app.services.analysis import face_analysis_service
+from app.services.session import session_service
 from app.services.storage import decode_image, delete_file, resolve_stored_path, save_screenshot
 from app.vision.face_identity import StoredFeatureError, deserialize_features
 
 router = APIRouter(prefix="/faces", tags=["人脸库"])
 
 
+# 反序列化探测特征版本，旧数据转换为需要重新注册的标志
 def _is_feature_current(blob: bytes) -> bool:
-    """判断存储的特征是否为当前算法版本（旧 pickle 视为需要重新注册）。"""
+    """判断存储的特征是否为当前算法版本（旧pickle视为需要重新注册）"""
     try:
         deserialize_features(blob)
     except StoredFeatureError:
@@ -40,10 +43,11 @@ def _is_feature_current(blob: bytes) -> bool:
     return True
 
 
+# 列表端点：读取持久人脸并附带特征版本标记
 @router.get("", response_model=FacesListResponse)
-async def list_faces_endpoint(current_user: CurrentUser, db: DbSession) -> FacesListResponse:
-    """列出当前登录用户的全部人脸记录。"""
-    records = list(list_faces(db, current_user.id))
+async def list_faces_endpoint(db: DbSession) -> FacesListResponse:
+    """列出全部人脸记录"""
+    records = list(list_faces(db))
     items = [
         FaceItem(
             name=record.name,
@@ -60,14 +64,14 @@ async def list_faces_endpoint(current_user: CurrentUser, db: DbSession) -> Faces
     return FacesListResponse(faces=items)
 
 
+# 注册端点：上传→解码→提特征→存截图→写库；失败补偿见行内批注
 @router.post("/register", response_model=FaceRegisterResponse)
 async def register_face(
-    current_user: CurrentUser,
     db: DbSession,
     file: UploadFile = File(..., description="人脸图片（JPG/PNG）"),
     name: str = Form(..., min_length=1, max_length=100),
 ) -> FaceRegisterResponse:
-    """注册或更新人脸。"""
+    """注册或更新人脸"""
     clean_name = name.strip()
     if not clean_name:
         raise ValidationError("姓名不能为空")
@@ -87,24 +91,30 @@ async def register_face(
             message=f"注册失败：{exc.message}。请确保光线充足、正脸对准镜头、画面中只有一张脸。",
         )
 
-    existing = get_face(db, current_user.id, clean_name)
+    existing = get_face(db, clean_name)
     old_screenshot = existing.screenshot if existing else None
 
     screenshot_path = save_screenshot(image, prefix=clean_name)
-    upsert_face(
-        db,
-        user_id=current_user.id,
-        name=clean_name,
-        features=features,
-        screenshot=screenshot_path,
-    )
+    # 失败补偿：数据库写入失败时删除刚落盘的新截图，不留孤儿文件
+    try:
+        upsert_face(
+            db,
+            name=clean_name,
+            features=features,
+            screenshot=screenshot_path,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        delete_file(screenshot_path)
+        raise
 
     # 更新成功后清理旧截图，避免文件堆积
     if old_screenshot and old_screenshot != screenshot_path:
         delete_file(old_screenshot)
 
     face_analysis_service.clear_cache()
-    logger.info("人脸注册成功 name=%s user=%s", clean_name, current_user.email)
+    logger.info("人脸注册成功 name=%s", clean_name)
     return FaceRegisterResponse(
         success=True,
         name=clean_name,
@@ -113,15 +123,15 @@ async def register_face(
     )
 
 
+# 截图端点：按姓名取存储路径并返回文件
 @router.post("/screenshot")
 async def get_face_screenshot(
     request: FaceScreenshotRequest,
-    current_user: CurrentUser,
     db: DbSession,
 ) -> FileResponse:
-    """获取人脸注册截图。"""
+    """获取人脸注册截图"""
     name = request.name.strip()
-    face = get_face(db, current_user.id, name)
+    face = get_face(db, name)
     if face is None or not face.screenshot:
         raise NotFoundError("截图不存在")
 
@@ -137,57 +147,64 @@ async def get_face_screenshot(
     )
 
 
+# 改名端点：更新显示名，并清理旧名相关缓存与运行态
 @router.put("/{name}", response_model=FaceModifyResponse)
 async def rename_face_endpoint(
     name: str,
     request: FaceRenameRequest,
-    current_user: CurrentUser,
     db: DbSession,
 ) -> FaceModifyResponse:
-    """重命名人脸（可选同时修正注册时间）。"""
+    """重命名人脸（可选同时修正注册时间）"""
     old_name = request.old_name.strip()
     new_name = request.new_name.strip()
     ok = rename_face(
         db,
-        user_id=current_user.id,
         old_name=old_name,
         new_name=new_name,
         register_time=request.register_time,
     )
     if not ok:
+        db.rollback()
         raise ValidationError("修改失败：目标名称已存在或原记录不存在")
+    db.commit()
 
+    # 改名迁移运行态（含暂离起点与累计秒数），历史会话不丢账；
+    # 去抖窗口按记录id索引，改名不影响
+    session_service.rename_runtime(old_name, new_name)
     face_analysis_service.clear_cache()
-    logger.info("人脸重命名 %s -> %s user=%s", old_name, new_name, current_user.email)
+    logger.info("人脸重命名 %s -> %s", old_name, new_name)
     return FaceModifyResponse(success=True, message="修改成功")
 
 
+# 删除端点：删除记录与截图，并清理运行态
 @router.delete("/{name}", response_model=FaceDeleteResponse)
 async def delete_face_endpoint(
     name: str,
-    current_user: CurrentUser,
     db: DbSession,
 ) -> FaceDeleteResponse:
-    """删除人脸记录及其截图。"""
+    """删除人脸记录及其截图"""
     clean_name = name.strip()
-    face = delete_face(db, user_id=current_user.id, name=clean_name)
+    face = delete_face(db, name=clean_name)
     if face is None:
+        db.rollback()
         raise NotFoundError(f"人脸不存在：{clean_name}")
+    db.commit()
 
     delete_file(face.screenshot)
+    session_service.forget_face(clean_name, face_id=face.id)
     face_analysis_service.clear_cache()
-    logger.info("删除人脸 name=%s user=%s", clean_name, current_user.email)
+    logger.info("删除人脸 name=%s", clean_name)
     return FaceDeleteResponse(success=True, name=clean_name, message="删除成功")
 
 
+# 一次性分析端点：直接返回检测/属性/身份结果，不触发会话业务
 @router.post("/analyze", response_model=DetectResponse)
 async def analyze_upload(
-    current_user: CurrentUser,
     file: UploadFile = File(..., description="待分析图片"),
     detect_gender_age: bool = Form(default=True),
     detect_identity: bool = Form(default=True),
 ) -> DetectResponse:
-    """一次性上传图片做完整分析（调试与第三方集成用）。"""
+    """一次性上传图片做完整分析（调试与第三方集成用）"""
     contents = await file.read()
     image = decode_image(contents)
 
@@ -196,7 +213,6 @@ async def analyze_upload(
             image,
             detect_gender_age=detect_gender_age,
             detect_identity=detect_identity,
-            user_id=current_user.id if detect_identity else None,
         )
     except AppError:
         raise

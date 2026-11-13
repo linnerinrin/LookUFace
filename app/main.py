@@ -1,17 +1,6 @@
-"""应用工厂与生命周期管理。
-
-相对旧版的修复：
-1. **静态资源不再挂在根路径**。旧版
-   ``app.mount("/", StaticFiles(directory=..., html=True))`` 会让整个应用所有
-   未匹配路径都落到静态目录，``/docs``、``/redoc`` 能否访问取决于路由注册顺序，
-   且任何拼错的 API 路径都会返回 HTML 而不是 JSON 错误。现在静态资源挂在
-   ``/static``，根路径显式重定向到 ``/static/idx.html``。
-2. **后台任务集中管理**：旧版只有验证码清理任务；现在补上「暂离超时自动签退」
-   兜底任务（旧版完全缺失，用户断线后计费会无限累计）。
-3. **启动期预检**：模型文件缺失不再等到第一个请求才 500，而是在启动日志里
-   明确列出。
-4. **事件循环登记**：把主循环交给日志广播器，解决工作线程日志丢失问题。
-"""
+# """模块：应用工厂与生命周期"""
+# """架构作用：装配API、静态资源与后台任务"""
+"""应用工厂与生命周期管理"""
 
 from __future__ import annotations
 
@@ -30,7 +19,6 @@ from app.core.errors_handlers import register_exception_handlers
 from app.core.middleware import BodySizeLimitMiddleware, RequestContextMiddleware
 from app.db.models import SessionLocal, init_database
 from app.logger import get_broadcaster, logger, setup_logging
-from app.services.email_service import cleanup_expired_codes
 
 #: 「暂离超时自动签退」的后台扫描间隔（秒）
 SETTLE_INTERVAL_SECONDS = 60
@@ -43,8 +31,9 @@ LookUFace —— 基于人脸识别的场地计时缴费服务。
 """
 
 
+# 周期创建会话，把超时结算和内存态清理交给业务服务
 async def _settle_expired_sessions() -> None:
-    """兜底任务：周期性把暂离超时的会话自动签退结算。"""
+    """兜底任务：周期性把暂离超时的会话自动签退结算"""
     from app.services.session import session_service
 
     while True:
@@ -64,14 +53,15 @@ async def _settle_expired_sessions() -> None:
             db.close()
 
 
+# 启动初始化资源和后台任务，退出时取消并等待任务完成
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """启动与关闭钩子。"""
+    """启动与关闭钩子"""
     logger.info("正在启动 %s v%s（debug=%s）", settings.APP_NAME, settings.APP_VERSION, settings.DEBUG)
     settings.ensure_runtime_dirs()
     init_database()
 
-    # 模型预检：缺失只告警，不阻断启动（health 接口会暴露 degraded 状态）
+    # 模型预检：缺失只告警，不阻断启动（health接口会暴露degraded状态）
     from app.vision.base import preflight
 
     preflight()
@@ -80,7 +70,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     get_broadcaster().attach_loop(loop)
 
     tasks: list[asyncio.Task[None]] = [
-        asyncio.create_task(cleanup_expired_codes(), name="cleanup-expired-codes"),
         asyncio.create_task(_settle_expired_sessions(), name="settle-expired-sessions"),
     ]
     logger.info("后台任务已启动：%s", ", ".join(task.get_name() for task in tasks))
@@ -103,8 +92,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("已安全关闭")
 
 
+# 注册中间件、路由和静态资源，返回供ASGI加载的应用
 def create_app() -> FastAPI:
-    """构建 FastAPI 应用。"""
+    """构建FastAPI应用"""
     setup_logging()
 
     app = FastAPI(
@@ -125,8 +115,8 @@ def create_app() -> FastAPI:
         allow_origins=settings.allowed_origins_list,
         allow_credentials=settings.cors_allow_credentials,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        # X-Requested-With 是前端连通性探测（api.js 的 diagnoseConnectivity）使用的头。
-        # 遗漏它会让该探测的预检失败，从而把「CORS 正常」误判为「CORS 被拒」。
+        # X-Requested-With是前端连通性探测（api.js的diagnoseConnectivity）使用的头
+        # 遗漏它会让该探测的预检失败，从而把「CORS正常」误判为「CORS被拒」
         allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Requested-With"],
         expose_headers=["X-Request-ID", "X-Process-Time-ms"],
         max_age=600,
@@ -137,13 +127,15 @@ def create_app() -> FastAPI:
     # API
     app.include_router(api_router, prefix="/api/v1")
 
-    # 静态资源：挂在 /static，不再抢占根路径
+    # 静态资源：挂在/static，不再抢占根路径
     app.mount("/static", StaticFiles(directory=str(settings.STATIC_DIR), html=True), name="static")
 
+    # 根路径重定向到静态首页，不进入业务API
     @app.get("/", include_in_schema=False)
     async def index() -> RedirectResponse:
         return RedirectResponse(url="/static/idx.html", status_code=307)
 
+    # 浏览器图标请求沿用静态资源跳转
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> RedirectResponse:
         return RedirectResponse(url="/static/logo.png", status_code=307)

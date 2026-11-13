@@ -1,16 +1,5 @@
-"""性别 / 年龄估计（Caffe 模型，Gil Levi & Tal Hassner）。
-
-相对旧版的修复：
-
-1. **预处理错误（影响精度）**：旧版写 ``swapRB=False`` 却使用
-   ``mean=(78, 88, 115)``。该均值是按 **RGB** 通道顺序给出的，若不做 R/B 交换，
-   等于把均值套在了错误的通道上。正确写法是 ``swapRB=True`` 配合官方均值
-   ``(78.4263377603, 87.7689143744, 114.895847746)``。
-2. **年龄区间标签错误**：旧版为 ``0-4/4-8/8-12/12-20/20-38/38-48/48-60/60+``，
-   与该模型训练时的 8 分类不符。已改为官方区间。
-3. **线程安全**：``forward()`` 包在全局推理锁内。
-4. **尺寸门限**：过小的人脸直接返回 Unknown，不再白跑两次前向。
-"""
+# """架构作用：从检测到的人脸图像推断性别、年龄标签及模型置信度"""
+"""性别 / 年龄估计（Caffe模型，Gil Levi & Tal Hassner）"""
 
 from __future__ import annotations
 
@@ -24,11 +13,11 @@ from app.logger import logger
 from app.vision.base import ThreadSafeModel, guarded, load_dnn_net
 
 _INPUT_SIZE = (227, 227)
-# 官方均值，RGB 顺序；配合 swapRB=True 使用
+# 官方均值，RGB顺序；配合swapRB=True使用
 _MEAN_SUBTRACTION = (78.4263377603, 87.7689143744, 114.895847746)
 
 _GENDER_LABELS = ("Male", "Female")
-# 模型训练时的 8 个年龄段
+# 模型训练时的8个年龄段
 _AGE_LABELS = (
     "(0-2)",
     "(4-6)",
@@ -45,7 +34,7 @@ UNKNOWN = "Unknown"
 
 @dataclass(frozen=True, slots=True)
 class Demographics:
-    """性别年龄估计结果。"""
+    """性别年龄估计结果"""
 
     gender: str = UNKNOWN
     age: str = UNKNOWN
@@ -57,8 +46,9 @@ class Demographics:
 
 
 class GenderAgeModel(ThreadSafeModel["GenderAgeModel"]):
-    """性别年龄模型（线程安全单例）。"""
+    """性别年龄模型（线程安全单例）"""
 
+    # """方法：加载性别和年龄网络，并缓存输入门限与标签"""
     def _build(self) -> None:
         self.gender_net = load_dnn_net(
             settings.gender_model_path,
@@ -74,9 +64,10 @@ class GenderAgeModel(ThreadSafeModel["GenderAgeModel"]):
         self.gender_labels = _GENDER_LABELS
         self.age_labels = _AGE_LABELS
 
+# """方法：将人脸裁剪图预处理后依次前向推理，聚合两个输出置信度"""
     @guarded
     def predict(self, face: np.ndarray) -> Demographics:
-        """预测性别与年龄，返回 (gender, age, confidence)。"""
+        """预测性别与年龄，返回 (gender, age, confidence)"""
         if face is None or face.size == 0:
             return Demographics()
         if min(face.shape[0], face.shape[1]) < self.min_face_size:
@@ -115,3 +106,4 @@ def get_gender_age_model() -> GenderAgeModel:
 
 
 __all__ = ["GenderAgeModel", "Demographics", "get_gender_age_model", "UNKNOWN"]
+

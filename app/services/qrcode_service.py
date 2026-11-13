@@ -1,20 +1,11 @@
-"""计费支付二维码生成。
+# """架构作用：把服务端计费报价转换为支付链接和可落盘二维码"""
+"""计费支付二维码生成
 
-相对旧版的修复（**P1 安全**）：
-
-旧版 ``checking_service.drawing_costQRcode`` 直接拼接用户输入::
-
-    qr_path = qr_dir / f"{name}_{online_time}.png"
-
-实测 ``name='../../../evil'`` 可写出 ``C:\\Users\\...\\AppData\\Local\\evil_10.png``，
-构成路径穿越；出错时返回空字符串 ``""``，调用方 ``FileResponse("")`` 会抛未处理异常。
-
-现在：
-* 文件名由 UUID 生成，用户输入只经过 ``sanitize_label`` 变成可读后缀；
+* 文件名由UUID生成，用户输入只经过 ``sanitize_label`` 变成可读后缀；
 * 落盘前用 ``safe_join`` 校验；
 * 失败抛 ``StorageError``，由全局异常处理器转成规范响应；
-* 目录改到 ``storage/qrcodes``（旧版在系统临时目录，容器/多实例下不可预期）；
-* **金额由服务端会话状态决定**，不再接受前端传入的 ``online_time`` 作为结算依据。
+* 二维码落盘到 ``storage/qrcodes``；
+* **金额由服务端会话状态决定**
 """
 
 from __future__ import annotations
@@ -33,13 +24,19 @@ from app.domain.session import compute_amount
 from app.logger import logger
 from app.services.storage import safe_join, sanitize_label
 
-#: 模拟支付网关。接入真实支付时替换为收银台下单接口。
+#: 模拟支付网关。接入真实支付时替换为收银台下单接口
 PAYMENT_GATEWAY_URL = "https://pay.example.com/pay"
+
+#: 二维码文件保留策略：超过该秒数的落盘二维码在下次生成时清理
+QRCODE_RETENTION_SECONDS = 24 * 3600
+
+#: 报价（二维码）有效期：过期后读取端点拒绝返回
+QUOTE_TTL_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True, slots=True)
 class PaymentQuote:
-    """一次计费报价（由服务端计算）。"""
+    """一次计费报价（由服务端计算）"""
 
     name: str
     minutes: int
@@ -49,13 +46,24 @@ class PaymentQuote:
 
 
 class QRCodeService:
-    """生成支付二维码。"""
+    """生成支付二维码"""
 
+    # """方法：费率每次报价时实时读取运行时配置，动态变更立即生效"""
     def __init__(self) -> None:
-        self._rate = settings.BILLING_RATE_PER_MINUTE
+        #: 报价状态登记表：文件名 -> (人脸名, 过期时刻time.time())，供读取端点校验
+        self._quotes: dict[str, tuple[str, float]] = {}
 
+    @property
+    def _rate(self) -> float:
+        return settings.BILLING_RATE_PER_MINUTE
+
+    # """方法：显式刷新预留接口——当前费率实时读取，调用此方法无副作用，仅为兼容"""
+    def refresh_rate(self) -> float:
+        return self._rate
+
+    # """方法：按服务端分钟数计算金额，并组成支付网关URL"""
     def build_quote(self, *, name: str, minutes: int) -> PaymentQuote:
-        """按分钟数生成报价与支付链接。金额只来自服务端。"""
+        """按分钟数生成报价与支付链接。金额只来自服务端"""
         if minutes < 0:
             raise ValidationError("计费时长不能为负")
         amount = compute_amount(int(minutes), self._rate)
@@ -63,8 +71,9 @@ class QRCodeService:
         pay_url = f"{PAYMENT_GATEWAY_URL}?name={label}&minutes={int(minutes)}&amount={amount:.2f}"
         return PaymentQuote(name=name, minutes=int(minutes), amount=amount, pay_url=pay_url)
 
+    # """方法：将报价中的支付URL编码为PNG字节，供保存层消费"""
     def render_png(self, quote: PaymentQuote) -> bytes:
-        """把支付链接渲染成 PNG 字节。"""
+        """把支付链接渲染成PNG字节"""
         try:
             qr = qrcode.QRCode(
                 version=None,
@@ -82,9 +91,11 @@ class QRCodeService:
         image.save(buffer, format="PNG")
         return buffer.getvalue()
 
+    # """方法：渲染二维码并写入qrcodes目录，返回绝对路径。落盘前先清理过期文件"""
     def save(self, quote: PaymentQuote) -> Path:
-        """生成并落盘，返回绝对路径。"""
+        """生成并落盘，返回绝对路径"""
         settings.qrcode_dir.mkdir(parents=True, exist_ok=True)
+        self._purge_expired(settings.qrcode_dir)
         label = sanitize_label(quote.name, fallback="user")
         filename = f"{label}_{quote.minutes}min_{uuid.uuid4().hex[:8]}.png"
         path = safe_join(settings.qrcode_dir, filename)
@@ -103,10 +114,53 @@ class QRCodeService:
             quote.amount,
             path.name,
         )
+        self._register_quote(path.name, quote.name)
         return path
 
+    # """方法：登记一份报价的文件名、会话归属与过期时刻"""
+    def _register_quote(self, filename: str, name: str) -> None:
+        import time as _time
+
+        self._quotes[filename] = (name, _time.time() + QUOTE_TTL_SECONDS)
+        # 顺手清理过期登记，避免表无界增长
+        expired = [k for k, (_, exp) in self._quotes.items() if exp < _time.time()]
+        for k in expired:
+            self._quotes.pop(k, None)
+
+    # """方法：校验二维码文件对应的报价仍在有效期内且会话名匹配"""
+    def validate_quote(self, filename: str, *, name: str | None = None) -> bool:
+        import time as _time
+
+        entry = self._quotes.get(filename)
+        if entry is None:
+            return False
+        owner, expires_at = entry
+        if expires_at < _time.time():
+            self._quotes.pop(filename, None)
+            return False
+        return name is None or owner == name
+
+    # """方法：按保留期清理目录内过期的二维码PNG；单个文件删除失败只告警"""
+    @staticmethod
+    def _purge_expired(directory: Path, *, now: float | None = None) -> int:
+        import time as _time
+
+        now_ts = _time.time() if now is None else now
+        removed = 0
+        for entry in directory.glob("*.png"):
+            try:
+                if now_ts - entry.stat().st_mtime > QRCODE_RETENTION_SECONDS:
+                    entry.unlink()
+                    removed += 1
+            except OSError as exc:
+                logger.warning("清理过期二维码失败 %s: %s", entry.name, exc)
+        if removed:
+            logger.info("已清理 %d 个过期支付二维码", removed)
+        return removed
+
+    # """方法：串联报价和落盘，返回包含二维码路径的报价对象"""
     def generate_for(self, *, name: str, minutes: int) -> PaymentQuote:
-        """报价并落盘，返回带路径的报价。"""
+        """报价并落盘，返回带路径的报价"""
         quote = self.build_quote(name=name, minutes=minutes)
         path = self.save(quote)
         return PaymentQuote(
@@ -121,3 +175,4 @@ class QRCodeService:
 qrcode_service = QRCodeService()
 
 __all__ = ["PAYMENT_GATEWAY_URL", "PaymentQuote", "QRCodeService", "qrcode_service"]
+

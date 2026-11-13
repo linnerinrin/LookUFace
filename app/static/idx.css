@@ -762,7 +762,7 @@ body.dark input:disabled {
     background: transparent;
 }
 .results-card {
-    display: block;          /* 改成 block，内容竖排 */
+    display: block;          /* 内容竖排 */
     width: 100%;
 }
 @media (max-width: 1100px) {

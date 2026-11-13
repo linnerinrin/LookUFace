@@ -2,13 +2,6 @@
  * idx.js —— 首页（双 iframe：入口 / 出口摄像头）
  *
  * 依赖：api.js（需先引入）
- *
- * 相对旧版的修复：
- *  1. 主题逻辑改用 LookUFace.theme，并通过 storage 事件与 iframe 双向同步
- *     （旧版只在切换时 postMessage，iframe 内主动切换主题后父页面不同步）。
- *  2. postMessage 校验来源，避免处理任意来源的消息。
- *  3. 状态指示器元素缺失时不再抛错（旧版直接访问 statusDot.className，
- *     但 idx.html 里根本没有这两个元素）。
  */
 (function () {
     'use strict';

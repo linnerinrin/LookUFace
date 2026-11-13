@@ -235,10 +235,7 @@ h1 {
     background: var(--nav-hover);
 }
 
-/* 主操作按钮。
-   此前 manager.css 只定义了 .btn 与 .btn-outline，没有 .btn-primary，
-   导致账单弹窗里的「打开支付链接」按钮没有任何配色（只剩 .btn 的基础形状）。
-   这里补上与主题一致的蓝色。 */
+/* 主操作按钮 */
 .btn-primary {
     background: #4a90e2;
     color: #fff;
@@ -268,7 +265,6 @@ h1 {
     transform: none;
 }
 
-/* 统计卡片 */
 /* 人脸列表容器 */
 .faces-container {
     background: var(--card-bg);
@@ -327,9 +323,7 @@ h1 {
     background: var(--status-bg);
 }
 
-/* 头像已按需求删除，这里只留空白占位，维持与右侧按钮区的横向间距。
-   注意：不再由它承担左缩进（.face-details 的 padding-left 负责），
-   否则「姓名」行会比「签到:…」行更靠左。 */
+/* 头像位置的空白占位，维持与右侧按钮区的横向间距 */
 .face-avatar-blank {
     width: 12px;
     flex-shrink: 0;
@@ -337,7 +331,7 @@ h1 {
 
 .face-details {
     flex: 1;
-    /* 头像删除后，用它给两行文字一个统一的左缩进，保证行间对齐 */
+    /* 给两行文字统一的左缩进，保证行间对齐 */
     padding-left: 8px;
 }
 
@@ -766,9 +760,8 @@ body.dark #checkoutModal .modal-content {
 }
 
 /* ========== 支付弹窗 ========== */
-/* 签退结算成功后自动弹出。与签到确认 / 签退弹窗共用同一套外观；
-   max-width 由 HTML 上的内联样式指定（460px）。
-   说明：原先的「账单」按钮与其弹窗已按需求删除，改为结算后自动弹出本弹窗。 */
+/* 签退结算成功后自动弹出，与签到确认 / 签退弹窗共用同一套外观
+   max-width 由 HTML 上的内联样式指定（460px） */
 #payModal .modal-content {
     background: rgba(255, 255, 255, 0.95);
     backdrop-filter: blur(8px);
@@ -820,9 +813,7 @@ body.dark #payModal .modal-content {
 }
 
 /* ========== 状态徽标 ========== */
-/* 圆点用纯 CSS 画，不再使用 ●（U+25CF）——
-   该字符在本机由 seguiemj 字体提供，实际渲染为彩色实心圆点，
-   观感与 emoji 一致（已用 Chrome 截图确认）。 */
+/* 圆点用纯 CSS 画 */
 .badge {
     display: inline-flex;
     align-items: center;

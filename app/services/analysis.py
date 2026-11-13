@@ -1,12 +1,12 @@
-"""人脸分析编排：检测 → 性别年龄 → 身份识别，并带识别结果缓存。
+# """架构作用：把视觉检测、人口属性推理、特征库读取与身份匹配封装为帧级分析能力"""
+# """模块：输出人脸框、属性、身份和耗时；以特征库快照缓存和ROI匹配缓存减少重复推理"""
+"""人脸分析编排：检测 → 性别年龄 → 身份识别，并带识别结果缓存
 
-相对旧版的修复：
-1. **识别结果缓存（解决 P0 请求风暴的关键一环）**：旧版每个 WS 帧都会对每个人脸
-   重新做一次 MediaPipe 推理 + 一次数据库全表扫描。现在对
-   ``(已知人脸数, ROI 指纹)`` 做短 TTL 缓存，同一张脸在 TTL 内只算一次。
-2. **单次遍历**：检测与识别复用同一个 ROI，不再重复裁剪。
-3. **批量载入**：一次取出该用户的全部人脸特征，在内存中比对。
-4. **异常隔离**：单个模型失败不会让整帧 500，而是该字段降级为 Unknown。
+1. **识别结果缓存**：对 ``(特征库世代, 已知人脸数, 阈值, ROI指纹)`` 做短TTL缓存，
+   同一张脸在TTL内只算一次
+2. **单次遍历**：检测与识别复用同一个ROI，不重复裁剪
+3. **批量载入**：一次取出全部人脸特征，在内存中比对
+4. **异常隔离**：单个模型失败不会让整帧500，而是该字段降级为Unknown
 """
 
 from __future__ import annotations
@@ -38,13 +38,13 @@ from app.vision.face_identity import (
 
 UNKNOWN = "Unknown"
 
-#: 指纹计算时把 ROI 缩放到的最长边
+#: 指纹计算时把ROI缩放到的最长边
 _FINGERPRINT_SIZE = 32
 
 
 @dataclass(slots=True)
 class AnalyzedFace:
-    """单张人脸的完整分析结果。"""
+    """单张人脸的完整分析结果"""
 
     bbox: list[int]
     gender: str = UNKNOWN
@@ -54,6 +54,7 @@ class AnalyzedFace:
     identity_confidence: float = 0.0
     detection_confidence: float = 0.0
 
+    # 已知身份以统一哨兵字符串判断，供帧流水线筛选可触发会话动作的人脸
     @property
     def is_known(self) -> bool:
         return self.identity != UNKNOWN
@@ -61,26 +62,29 @@ class AnalyzedFace:
 
 @dataclass(slots=True)
 class FrameAnalysis:
-    """一帧的分析结果。"""
+    """一帧的分析结果"""
 
     faces: list[AnalyzedFace] = field(default_factory=list)
     processing_ms: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
 
+    # 数量直接由本帧结果列表派生，避免单独维护计数与列表不同步
     @property
     def face_count(self) -> int:
         return len(self.faces)
 
 
 class _MatchCache:
-    """定长 + TTL 的识别结果缓存（LRU 淘汰）。"""
+    """定长 + TTL的识别结果缓存（LRU淘汰）"""
 
+    # 每个分析服务各持有一个有界缓存，锁只保护容器操作，不覆盖模型推理
     def __init__(self, maxsize: int = 512, ttl_seconds: float = 3.0) -> None:
         self._maxsize = maxsize
         self._ttl = ttl_seconds
         self._data: OrderedDict[str, tuple[float, tuple[str, float]]] = OrderedDict()
         self._lock = threading.Lock()
 
+    # 查询只检查当前键的TTL；命中后移动到队尾，容量满时优先淘汰最久未访问项
     def get(self, key: str) -> tuple[str, float] | None:
         now = time.monotonic()
         with self._lock:
@@ -94,24 +98,37 @@ class _MatchCache:
             self._data.move_to_end(key)
             return value
 
+    # 写入前先批量清理已过期项，让容量/统计不被无人再查的过期键占用
     def put(self, key: str, value: tuple[str, float]) -> None:
+        now = time.monotonic()
         with self._lock:
-            self._data[key] = (time.monotonic() + self._ttl, value)
+            self._purge_expired(now)
+            self._data[key] = (now + self._ttl, value)
             self._data.move_to_end(key)
             while len(self._data) > self._maxsize:
                 self._data.popitem(last=False)
 
+    # 批量过期清理：遍历删除所有TTL已过期的键（put与诊断时触发）
+    def _purge_expired(self, now: float) -> None:
+        expired = [k for k, (expires_at, _) in self._data.items() if expires_at < now]
+        for k in expired:
+            self._data.pop(k, None)
+
+    # 显式失效只清空当前内容，不能阻止已经开始的识别稍后重新写回
     def clear(self) -> None:
         with self._lock:
             self._data.clear()
 
+    # 返回未过期条目数（先批量清理过期项），供诊断使用
     def __len__(self) -> int:
         with self._lock:
+            self._purge_expired(time.monotonic())
             return len(self._data)
 
 
+# ROI先等比缩到最长32像素再做短哈希，以牺牲细节换取低成本、可复用的匹配缓存键
 def feature_fingerprint(image: np.ndarray) -> str:
-    """对缩放后的 ROI 取哈希，作为识别缓存键。"""
+    """对缩放后的ROI取哈希，作为识别缓存键"""
     if image is None or image.size == 0:
         return "empty"
 
@@ -128,31 +145,39 @@ def feature_fingerprint(image: np.ndarray) -> str:
 
 
 class FaceAnalysisService:
-    """人脸分析服务（无状态，可安全共享）。"""
+    """人脸分析服务（无状态，可安全共享）"""
 
     CACHE_TTL_SECONDS = 3.0
 
-    #: 已知特征的内存缓存有效期（秒）。理由见 load_known_features 的说明。
+    #: 已知特征的内存缓存有效期（秒）。理由见load_known_features的说明
     KNOWN_FEATURES_TTL_SECONDS = 5.0
 
+    # 分开保存ROI匹配和特征库快照，两者寿命不同，更新人脸库时需要同时失效
     def __init__(self) -> None:
         self._cache = _MatchCache(ttl_seconds=self.CACHE_TTL_SECONDS)
-        #: user_id -> (过期时刻 monotonic, 特征列表)
-        self._known_cache: dict[int, tuple[float, list[tuple[str, np.ndarray]]]] = {}
+        #: (过期时刻monotonic, 特征列表)。单租户后只有一份，不再是dict
+        self._known_cache: tuple[float, list[tuple[str, np.ndarray]]] | None = None
         self._known_lock = threading.Lock()
+        #: 特征库世代号：注册/改名/删除时 +1，用于把匹配缓存键与快照回填
+        #: 绑定到同一代特征库，避免跨clear_cache的并发载入/识别回填旧快照
+        self._generation = 0
+
+    def _generation_snapshot(self) -> int:
+        with self._known_lock:
+            return self._generation
 
     # ------------------------------------------------------------------ #
     # 分析
     # ------------------------------------------------------------------ #
+    # 一帧只检测一次、读取一次特征库快照；各人脸共享该快照，结果耗时包含所有分析步骤
     def analyze_image(
         self,
         image: np.ndarray,
         *,
         detect_gender_age: bool = True,
         detect_identity: bool = True,
-        user_id: int | None = None,
     ) -> FrameAnalysis:
-        """分析整帧图像。"""
+        """分析整帧图像"""
         started = time.perf_counter()
         if image is None or image.size == 0:
             return FrameAnalysis(faces=[], processing_ms=0.0)
@@ -167,8 +192,8 @@ class FaceAnalysisService:
 
         # 识别所需的已知特征只查一次
         known: list[tuple[str, np.ndarray]] = []
-        if detect_identity and user_id is not None and boxes:
-            known = self.load_known_features(user_id)
+        if detect_identity and boxes:
+            known = self.load_known_features()
 
         faces: list[AnalyzedFace] = []
         for box in boxes:
@@ -185,6 +210,7 @@ class FaceAnalysisService:
         elapsed_ms = (time.perf_counter() - started) * 1000
         return FrameAnalysis(faces=faces, processing_ms=round(elapsed_ms, 2))
 
+    # 同一裁剪ROI依次送入可选属性模型与身份模型；空裁剪保留框信息并返回Unknown字段
     def _analyze_single_face(
         self,
         image: np.ndarray,
@@ -213,6 +239,7 @@ class FaceAnalysisService:
 
         return result
 
+    # 属性推理失败只降级这一张脸的属性，身份识别仍可继续；业务异常和意外异常分级记录
     @staticmethod
     def _safe_demographics(roi: np.ndarray) -> Demographics:
         try:
@@ -227,36 +254,33 @@ class FaceAnalysisService:
     # ------------------------------------------------------------------ #
     # 识别
     # ------------------------------------------------------------------ #
-    #: 已知特征的内存缓存有效期（秒）。
-    #:
-    #: 为什么必须有：特征矩阵是 468×468，序列化后**约 1.44 MB/人**，
-    #: 反序列化一次要 ~28 ms。而 ``analyze_image`` 是**每帧**调用的
-    #: （约 7 fps），若每次都读库+解析 JSON，10 个人就是每帧解析 ~14 MB，
-    #: 单是解析开销就会把帧率拖垮。
-    #:
-    #: 缓存的失效由 ``clear_cache()`` 负责 —— 注册 / 重命名 / 删除人脸时
-    #: 路由层都会调用它，因此这里用一个短 TTL 兜底即可（例如别的进程改了库）。
-
-    def load_known_features(self, user_id: int) -> list[tuple[str, np.ndarray]]:
-        """载入该用户所有可用的特征矩阵（带短 TTL 缓存）。"""
+    # 锁内读取/替换快照，昂贵的数据库读取和反序列化在锁外执行，避免阻塞其他命中请求
+    def load_known_features(self) -> list[tuple[str, np.ndarray]]:
+        """载入全部可用的特征矩阵（带短TTL缓存）"""
         now = time.monotonic()
 
         with self._known_lock:
-            cached = self._known_cache.get(user_id)
+            cached = self._known_cache
             if cached is not None and cached[0] > now:
                 return cached[1]
+            gen_before = self._generation
 
-        loaded = self._load_known_features_uncached(user_id)
+        loaded = self._load_known_features_uncached()
 
         with self._known_lock:
-            self._known_cache[user_id] = (now + self.KNOWN_FEATURES_TTL_SECONDS, loaded)
+            if self._generation != gen_before:
+                # 载入期间人脸库已变更（clear_cache），本份快照已过时：
+                # 不回填缓存，直接返回给本次调用（其内容不晚于读取时刻）
+                return loaded
+            self._known_cache = (now + self.KNOWN_FEATURES_TTL_SECONDS, loaded)
         return loaded
 
-    def _load_known_features_uncached(self, user_id: int) -> list[tuple[str, np.ndarray]]:
-        """真正读库并解析特征。"""
+    # 独立短生命周期数据库会话取出记录，关闭连接后逐条解析；坏的历史特征只跳过该记录
+    def _load_known_features_uncached(self) -> list[tuple[str, np.ndarray]]:
+        """真正读库并解析特征"""
         db = SessionLocal()
         try:
-            records = list(list_faces(db, user_id))
+            records = list(list_faces(db))
         finally:
             db.close()
 
@@ -265,17 +289,17 @@ class FaceAnalysisService:
             try:
                 known.append((record.name, deserialize_features(record.features)))
             except StoredFeatureError as exc:
-                # 旧 pickle 记录：不复用、不反序列化
+                # 旧pickle记录：不复用、不反序列化
                 logger.warning("人脸 %s 的特征不可用（%s）", record.name, exc)
 
         logger.debug(
-            "已载入 %d 条人脸特征（user_id=%s，缓存 %.1f 秒）",
+            "已载入 %d 条人脸特征（缓存 %.1f 秒）",
             len(known),
-            user_id,
             self.KNOWN_FEATURES_TTL_SECONDS,
         )
         return known
 
+    # 缓存未命中才提取探针特征，遍历库中矩阵取最高相似度，再用配置阈值决定是否接受身份
     def _recognize(
         self,
         roi: np.ndarray,
@@ -284,7 +308,13 @@ class FaceAnalysisService:
         if not known:
             return UNKNOWN, 0.0
 
-        cache_key = f"{len(known)}:{feature_fingerprint(roi)}"
+        # 缓存键绑定：特征库世代号 + 数量 + 阈值配置 + ROI指纹；
+        # 改名/换特征/调阈值后旧键自然失效，不会再返回旧身份
+        generation = self._generation_snapshot()
+        cache_key = (
+            f"g{generation}:n{len(known)}:t{settings.RECOGNIZE_THRESHOLD}:"
+            f"{feature_fingerprint(roi)}"
+        )
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -307,12 +337,12 @@ class FaceAnalysisService:
             try:
                 score = embedder.compare(probe, matrix)
             except ValueError:
-                # 维度不一致（不同算法版本）时跳过而不是崩溃。
+                # 维度不一致（不同算法版本）时跳过而不是崩溃
                 #
                 # 注意：这里是**静默跳过** —— 调用方只会看到「陌生人」，
                 # 不会有任何报错。正因如此，特征维度必须保持不变
-                # （见 app/vision/face_identity.py 中关于 468/478 的说明）：
-                # 一旦新旧特征维度不同，识别会无声失效而很难被发现。
+                # （见app/vision/face_identity.py中关于468/478的说明）：
+                # 一旦新旧特征维度不同，识别会无声失效而很难被发现
                 mismatched.append(f"{name}({matrix.shape[0]})")
                 continue
             if score > best_score:
@@ -330,14 +360,18 @@ class FaceAnalysisService:
         if best_score < threshold:
             best_name = UNKNOWN
 
-        self._cache.put(cache_key, (best_name, best_score))
+        # 写缓存前校验世代号：比对期间人脸库已变更则不写（结果仍返回本次调用方，
+        # 但其对应的是变更前的快照，不应缓存供后续复用）
+        if self._generation_snapshot() == generation:
+            self._cache.put(cache_key, (best_name, best_score))
         return best_name, best_score
 
     # ------------------------------------------------------------------ #
     # 注册
     # ------------------------------------------------------------------ #
+    # 注册路径复用同一嵌入算法，保留已知质量错误，统一包装底层异常后序列化为数据库字节
     def extract_features(self, image: np.ndarray) -> bytes:
-        """提取可存储的特征字节。人脸不合格时抛 ``FaceQualityError``。"""
+        """提取可存储的特征字节。人脸不合格时抛 ``FaceQualityError``"""
         try:
             matrix = get_embedder().extract(image)
         except FaceQualityError:
@@ -348,15 +382,17 @@ class FaceAnalysisService:
             raise FaceQualityError(f"特征提取失败：{exc}") from exc
         return serialize_features(matrix)
 
+    # 注册、改名、删除后由调用方触发；两层缓存分别加锁清空，并非一次跨缓存原子失效
     def clear_cache(self) -> None:
-        """清空全部缓存。
+        """清空全部缓存
 
         注册 / 重命名 / 删除人脸后必须调用，否则最多 ``TTL`` 秒内仍在用旧特征
-        （表现为「刚注册的人认不出来，过几秒又好了」）。
+        （表现为「刚注册的人认不出来，过几秒又好了」）
         """
         self._cache.clear()
         with self._known_lock:
-            self._known_cache.clear()
+            self._known_cache = None
+            self._generation += 1
 
 
 face_analysis_service = FaceAnalysisService()

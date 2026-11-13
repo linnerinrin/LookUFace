@@ -1,12 +1,5 @@
-"""人脸检测（OpenCV DNN，SSD ResNet-10）。
-
-相对旧版的修复：
-1. **阈值**：旧版用 ``FACE_CONF_THRESHOLD=0.925``，是 OpenCV 官方推荐值 0.5 的近两倍，
-   会造成大量漏检。默认回到 0.5（可配置）。
-2. **线程安全**：所有 ``forward()`` 调用包在全局 ``inference_lock`` 内。
-3. **批量**：一次推理返回全部框并按面积降序，便于上层优先处理主目标。
-4. **延迟实例化**：不再在 import 时加载模型，避免缺失模型文件时连单元测试都无法收集。
-"""
+# """架构作用：以OpenCV DNN将原始帧转换为按面积排序的人脸框"""
+"""人脸检测（OpenCV DNN，SSD ResNet-10）"""
 
 from __future__ import annotations
 
@@ -18,16 +11,16 @@ import numpy as np
 from app.config import settings
 from app.vision.base import ThreadSafeModel, guarded, load_dnn_net
 
-# OpenCV face detector 的输入规格
+# OpenCV face detector的输入规格
 _INPUT_SIZE = (300, 300)
-# 训练时使用的 BGR 均值（OpenCV 官方示例值）
+# 训练时使用的BGR均值（OpenCV官方示例值）
 _MEAN_SUBTRACTION = (104.0, 117.0, 123.0)
 _SCALE_FACTOR = 1.0
 
 
 @dataclass(frozen=True, slots=True)
 class FaceBox:
-    """一个人脸框。"""
+    """一个人脸框"""
 
     x1: int
     y1: int
@@ -55,8 +48,9 @@ class FaceBox:
 
 
 class FaceDetector(ThreadSafeModel["FaceDetector"]):
-    """OpenCV DNN 人脸检测器（线程安全单例）。"""
+    """OpenCV DNN人脸检测器（线程安全单例）"""
 
+    # """方法：加载检测网络及其阈值、最小人脸尺寸配置"""
     def _build(self) -> None:
         self.net = load_dnn_net(
             settings.face_model_path,
@@ -66,6 +60,7 @@ class FaceDetector(ThreadSafeModel["FaceDetector"]):
         self.conf_threshold = settings.FACE_CONF_THRESHOLD
         self.min_face_size = settings.MIN_FACE_SIZE
 
+# """方法：把帧转换为DNN blob，筛选、裁剪并按面积排序检测框"""
     @guarded
     def detect(
         self,
@@ -74,7 +69,7 @@ class FaceDetector(ThreadSafeModel["FaceDetector"]):
         conf_threshold: float | None = None,
         apply_min_size: bool = True,
     ) -> list[FaceBox]:
-        """检测人脸框，按面积从大到小返回。"""
+        """检测人脸框，按面积从大到小返回"""
         if frame is None or frame.size == 0:
             return []
 
@@ -119,8 +114,9 @@ class FaceDetector(ThreadSafeModel["FaceDetector"]):
 
 
 def get_face_detector() -> FaceDetector:
-    """取回全局检测器（首次调用时加载模型）。"""
+    """取回全局检测器（首次调用时加载模型）"""
     return FaceDetector.instance()
 
 
 __all__ = ["FaceDetector", "FaceBox", "get_face_detector"]
+

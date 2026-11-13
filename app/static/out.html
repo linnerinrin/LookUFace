@@ -37,8 +37,6 @@
         .face-card { color: white; padding: 6px 10px; border-radius: 10px; margin-bottom: 6px; font-size: 12px; }
         .face-card.known { background: linear-gradient(135deg, #43a047, #1b5e20); }
         .face-card.unknown { background: linear-gradient(135deg, #ff5722, #bf360c); }
-        .login-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 10; }
-        .login-overlay-content { text-align: center; color: white; }
         body.dark { --bg: #1a1a2e; --text: #e0e0e0; }
         body.dark .btn-outline { border-color: #555; color: #ccc; }
         body.dark .results { background: rgba(40,40,60,0.15); }
@@ -55,12 +53,6 @@
 
     <!-- 摄像头画布 -->
     <div class="video-wrap">
-        <div id="loginOverlay" class="login-overlay" style="display: none;">
-            <div class="login-overlay-content">
-                <p>请先登录</p>
-                <button id="overlayLoginBtn" class="btn btn-primary">立即登录</button>
-            </div>
-        </div>
         <video id="video" autoplay playsinline muted></video>
         <canvas id="overlayCanvas"></canvas>
         <div class="fps" id="fps">FPS: --</div>
@@ -76,7 +68,6 @@
 </div>
 
 <script src="api.js"></script>
-<script src="auth.js"></script>
 <script src="camera-core.js"></script>
 <script src="out.js"></script>
 </body>

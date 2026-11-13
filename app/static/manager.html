@@ -20,16 +20,13 @@
                 <a href="console.html" class="nav-item">
                     <span>控制台</span>
                 </a>
-                <a href="account.html" class="nav-item">
-                    <span>账号管理</span>
+                <a href="settings.html" class="nav-item">
+                    <span>场地设置</span>
                 </a>
             </nav>
             <div class="sidebar-footer">
                 <button id="themeToggle" class="sidebar-btn">
                     <span>切换主题</span>
-                </button>
-                <button id="loginBtn" class="sidebar-btn">
-                    <span>登录账号</span>
                 </button>
 
             </div>
@@ -72,17 +69,6 @@
             </div>
         </div>
     </div>
-
-    <div id="authModal" class="modal auth-modal" style="display: none;">
-        <div class="modal-content auth-content">
-            <div class="modal-header">
-                <h3 id="authTitle">登录账号</h3>
-                <button class="modal-close" onclick="closeAuthModal()">&times;</button>
-            </div>
-            <div class="modal-body" id="authBody"></div>
-        </div>
-    </div>
-
 
     <div id="modifyModal" class="modal" style="display: none;">
         <div class="modal-content auth-content" style="max-width: 450px;">
@@ -163,9 +149,7 @@
                             默认现在
                         </span>
                     </label>
-                    <!-- autocomplete=off：Chrome 会把上一次的值"恢复"进
-                         datetime-local 控件，覆盖掉脚本赋的新值，导致签退时间
-                         变成之前某个时刻（实测造成"签退后账单全是 0"）。 -->
+                    <!-- autocomplete=off：避免 Chrome 表单值恢复覆盖脚本赋的新值 -->
                     <input type="datetime-local" id="checkoutCustomTime" class="auth-input"
                            step="1" autocomplete="off">
                     <p style="color: var(--text-secondary); font-size: 12px; margin-top: 6px;"
@@ -203,8 +187,8 @@
         </div>
     </div>
 
-    <!-- 支付弹窗：签退结算成功后弹出。
-         二维码内容为占位（「开发中」），支付链接指向 pay-dev.html。 -->
+    <!-- 支付弹窗：签退结算成功后弹出
+         二维码内容为占位（「开发中」），支付链接指向 pay-dev.html -->
     <div id="payModal" class="modal" style="display: none;">
         <div class="modal-content auth-content" style="max-width: 460px;">
             <div class="modal-header">
@@ -262,7 +246,6 @@
     </div>
 
     <script src="api.js"></script>
-    <script src="auth.js"></script>
     <script src="manager.js"></script>
 </body>
 </html>

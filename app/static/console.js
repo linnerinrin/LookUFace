@@ -2,15 +2,6 @@
  * console.js —— 控制台日志页面
  *
  * 依赖：api.js（需先引入）
- *
- * 相对旧版的修复：
- *  1. 旧版把日志 WebSocket 指向 /api/v1/ws/log；新端点为 /api/v1/ws/logs。
- *  2. 旧版劫持 console.log/warn/error 把本页所有输出再塞回控制台，
- *     形成「看日志的页面自己产生日志」的循环噪声，已移除。
- *  3. 旧版在 loadHistory().then(...) 里用裸标识符 logCount / consoleOutput /
- *     logCountSpan —— 它们是 `let`/`const` 声明在文件中部，处于**暂时性死区**，
- *     首次执行必然抛 ReferenceError。现改为在文件顶部先取元素。
- *  4. 历史日志与实时日志混在一起无法区分；现在实时日志用不同前缀标注。
  */
 (function () {
     'use strict';

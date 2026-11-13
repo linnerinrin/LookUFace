@@ -1,7 +1,8 @@
-"""应用级异常类型。
+# """架构作用：定义跨服务层传播并由HTTP边界统一转换的业务异常"""
+"""应用级异常类型
 
 统一异常语义，让路由层只需 ``raise DomainError(...)``，
-由 ``app.core.errors`` 里的处理器转换成规范的 HTTP 响应。
+由 ``app.core.errors`` 里的处理器转换成规范的HTTP响应
 """
 
 from __future__ import annotations
@@ -10,12 +11,13 @@ from typing import Any
 
 
 class AppError(Exception):
-    """所有业务异常的基类。"""
+    """所有业务异常的基类"""
 
     status_code: int = 500
     code: str = "internal_error"
     default_message: str = "服务器内部错误"
 
+    # """方法：组合默认异常语义和调用方覆盖值，保留结构化详情"""
     def __init__(
         self,
         message: str | None = None,
@@ -32,6 +34,7 @@ class AppError(Exception):
         self.details = details or {}
         super().__init__(self.message)
 
+    # """方法：把业务异常转换为响应字典，按需附带详情和请求标识"""
     def to_payload(self, request_id: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "detail": self.message,
@@ -50,40 +53,10 @@ class ValidationError(AppError):
     default_message = "请求参数不合法"
 
 
-class AuthError(AppError):
-    status_code = 401
-    code = "unauthorized"
-    default_message = "未认证或凭据无效"
-
-
-class PermissionError_(AppError):
-    status_code = 403
-    code = "forbidden"
-    default_message = "无权访问该资源"
-
-
 class NotFoundError(AppError):
     status_code = 404
     code = "not_found"
     default_message = "资源不存在"
-
-
-class ConflictError(AppError):
-    status_code = 409
-    code = "conflict"
-    default_message = "资源状态冲突"
-
-
-class RateLimitError(AppError):
-    status_code = 429
-    code = "rate_limited"
-    default_message = "请求过于频繁，请稍后再试"
-
-
-class ExternalServiceError(AppError):
-    status_code = 502
-    code = "external_service_error"
-    default_message = "外部服务调用失败"
 
 
 class ModelUnavailableError(AppError):
@@ -93,7 +66,7 @@ class ModelUnavailableError(AppError):
 
 
 class FaceQualityError(AppError):
-    """人脸质量不满足要求（未检出、多人脸、过小等）。"""
+    """人脸质量不满足要求（未检出、多人脸、过小等）"""
 
     status_code = 422
     code = "face_quality"
@@ -109,13 +82,9 @@ class StorageError(AppError):
 __all__ = [
     "AppError",
     "ValidationError",
-    "AuthError",
-    "PermissionError_",
     "NotFoundError",
-    "ConflictError",
-    "RateLimitError",
-    "ExternalServiceError",
     "ModelUnavailableError",
     "FaceQualityError",
     "StorageError",
 ]
+

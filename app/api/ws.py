@@ -1,64 +1,32 @@
-"""WebSocket 路由：摄像头视频流与控制台日志流。
+# """模块：摄像头与日志WebSocket"""
+# """架构作用：接收视频帧并返回分析结果，或订阅实时日志"""
+"""WebSocket路由：摄像头视频流与控制台日志流
 
-相对旧版的修复：
-1. **认证**：旧版 ``/ws/camera`` 完全不校验身份，任何能连上端口的人都可以
-   推流并对**任意 user_id** 触发签到（实际是前端从 localStorage 拿 token 却没有
-   传进来）。现在握手时校验 JWT，未通过直接以 1008 关闭。
-2. **心跳**：旧版没有 ping/pong，网络抖动后连接会静默僵死。现在客户端可发
-   文本心跳，服务端回应 ``pong``。
-3. **背压**：帧处理走 ``FrameAnalyzer``，在途帧超限即丢帧，不会无限堆积。
-4. **业务联动**：识别到已知人脸后由服务端直接执行签到/签退，
-   不再依赖前端每帧发 HTTP 请求。
-5. **错误隔离**：单帧异常只回一条错误消息，不断开连接。
+1. **心跳**：客户端可发文本心跳，服务端回应 ``pong``
+2. **背压**：帧处理走 ``FrameAnalyzer``，在途帧超限即丢帧，不会无限堆积
+3. **业务联动**：识别到已知人脸后由服务端直接执行签到/签退
+4. **错误隔离**：单帧异常只回一条错误消息，不断开连接
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.errors import AppError, AuthError
-from app.db.models import SessionLocal, User
+from app.core.errors import AppError
 from app.logger import get_broadcaster, logger
 from app.services.frame_pipeline import ROLE_ENTRY, ROLE_EXIT, analyzer_for
-from app.services.security import decode_token
 
 router = APIRouter(tags=["WebSocket"])
 
-_WS_AUTH_FAILED = 1008  # RFC 6455: policy violation
 
-
-def _authenticate(token: str | None) -> User | None:
-    """校验查询参数里的 JWT，返回用户。"""
-    if not token:
-        return None
-    payload = decode_token(token)
-    if not payload:
-        return None
-    user_id = payload.get("user_id")
-    if not isinstance(user_id, int):
-        return None
-    db: Session = SessionLocal()
-    try:
-        return db.get(User, user_id)
-    finally:
-        db.close()
-
-
+# 摄像头连接主循环：校验角色后循环接收文本/二进制帧并回写结果
 async def _handle_camera(websocket: WebSocket, role: str) -> None:
-    """共享的摄像头帧处理循环。"""
-    token = websocket.query_params.get("token")
-    user = _authenticate(token)
-    if user is None:
-        await websocket.close(code=_WS_AUTH_FAILED, reason="未认证：缺少或无效的 token")
-        logger.warning("[%s] 摄像头连接被拒绝（认证失败）", role)
-        return
-
+    """共享的摄像头帧处理循环"""
     await websocket.accept()
     label = "入口" if role == ROLE_ENTRY else "出口"
     analyzer = analyzer_for(role)
-    logger.info("[%s] 摄像头已连接 user=%s", label, user.email)
+    logger.info("[%s] 摄像头已连接", label)
 
     try:
         while True:
@@ -73,7 +41,7 @@ async def _handle_camera(websocket: WebSocket, role: str) -> None:
             payload: bytes | None = message.get("bytes")
             text: str | None = message.get("text")
 
-            # 文本消息用于心跳 / 控制
+            # 文本消息用于心跳/控制
             if payload is None and text is not None:
                 if text.strip().lower() in {"ping", '"ping"'}:
                     await websocket.send_json({"success": True, "type": "pong"})
@@ -89,7 +57,7 @@ async def _handle_camera(websocket: WebSocket, role: str) -> None:
                 continue
 
             try:
-                outcome = await analyzer.process(frame, user_id=user.id, role=role)
+                outcome = await analyzer.process(frame, role=role)
             except AppError as exc:
                 await websocket.send_json(
                     {"success": False, "detail": exc.message, "code": exc.code}
@@ -130,28 +98,31 @@ async def _handle_camera(websocket: WebSocket, role: str) -> None:
                 }
             )
     except WebSocketDisconnect:
-        logger.info("[%s] 摄像头已断开 user=%s", label, user.email)
+        logger.info("[%s] 摄像头已断开", label)
     except Exception:
         logger.exception("[%s] 摄像头连接异常终止", label)
     finally:
-        logger.info("[%s] 摄像头连接结束 user=%s", label, user.email)
+        logger.info("[%s] 摄像头连接结束", label)
 
 
+# 入口WS端点：固定role=entry，交给通用处理器
 @router.websocket("/ws/camera")
 async def websocket_camera(websocket: WebSocket) -> None:
-    """入口摄像头：识别到已知人脸自动签到。"""
+    """入口摄像头：识别到已知人脸自动签到"""
     await _handle_camera(websocket, ROLE_ENTRY)
 
 
+# 出口WS端点：固定role=exit，交给通用处理器
 @router.websocket("/ws/camera-exit")
 async def websocket_camera_exit(websocket: WebSocket) -> None:
-    """出口摄像头：在线者自动暂离，暂离者自动签退结算。"""
+    """出口摄像头：在线者自动暂离，暂离者自动签退结算"""
     await _handle_camera(websocket, ROLE_EXIT)
 
 
+# 日志WS端点：登记广播器后保持连接，断开时移除
 @router.websocket("/ws/logs")
 async def websocket_logs(websocket: WebSocket) -> None:
-    """控制台日志实时推送。"""
+    """控制台日志实时推送"""
     await websocket.accept()
     broadcaster = get_broadcaster()
     broadcaster.add_ws(websocket)

@@ -1,6 +1,6 @@
 // manager.js - 人脸库管理页面
 var LF = window.LookUFace;
-// 依赖：api.js（需先引入）。
+// 依赖：api.js（需先引入）
 /*
 
 *获取人脸列表 调face/list-with-screenshot 接口调db 并且可以按照name/duration/online排序
@@ -9,9 +9,8 @@ var LF = window.LookUFace;
 
 initTheme()主题初始化
 toggleTheme()主题切换
-isLoggedIn()检查是否已登录
 checkBackend()检查后端是否存活
-updateUIAfterLoginChange() 通过登录状态更新按钮列表
+reloadFaces() 重新拉取人脸列表
 sortFaces() 列表排序
 exportToExcel() 导出excel
 showModifyModal/closeModifyModal/ 修改模态框操作
@@ -40,12 +39,6 @@ let checkinTargetName = ''; //登入的脸
 
 
 
-//检查是否已登录
-function isLoggedIn() {
-    return LF.auth.isLoggedIn();
-}
-
-
 //检查后端状态 fetch health接口
 async function checkBackend() {
     const dot = document.getElementById('statusDot');
@@ -63,38 +56,10 @@ async function checkBackend() {
     }
 }
 
-// 登录状态变化时刷新按钮和列表
-function updateUIAfterLoginChange() {
-    const btnContainer = document.getElementById('sortBtnContainer');
-    if (btnContainer) {
-        btnContainer.style.display = isLoggedIn() ? 'flex' : 'none';
-    }
-    if (isLoggedIn()) {
-        loadFaces();
-    } else {
-        document.getElementById('facesGrid').innerHTML = `
-            <div class="empty-state-large">
-                <p>请先登录查看人脸库</p>
-                <button id="loginPromptBtn" class="btn btn-primary" style="margin-top: 16px;">立即登录</button>
-            </div>
-        `;
-        // 统计卡片已按需求整块删除，这里只需更新列表标题旁的条数
-        setTextIfPresent('facesCount', '0 条记录');
-        const loginBtn = document.getElementById('loginPromptBtn');
-        if (loginBtn) {
-            loginBtn.onclick = () => {
-                if (typeof showLoginModal === 'function') showLoginModal();
-            };
-        }
-    }
+// 刷新人脸列表
+function reloadFaces() {
+    loadFaces();
 }
-
-//监听登录状态变化
-window.addEventListener('storage', function(e) {
-    if (e.key === 'token' || e.key === 'user') {
-        updateUIAfterLoginChange();
-    }
-});
 
 //排序按钮 有name/online/duration排序
 function sortFaces(faces, sortType) {
@@ -208,25 +173,13 @@ document.addEventListener('keydown', function(e) {
 async function loadFaces() {
     const grid = document.getElementById('facesGrid');
 
-    if (!isLoggedIn()) {
-        updateUIAfterLoginChange();
-        return;
-    }
-
     grid.innerHTML = '<div class="loading-state">加载中...</div>';
 
     try {
         const data = await LF.api.get('/faces');
         facesData = data.faces || [];
-        // 说明：原先这里还会算出在线人数写给 #onlineCount，
-        // 但那个统计卡片已按需求整块删除，因此不再做这份无用计算。
         renderFaces(facesData);
     } catch (err) {
-        if (err.status === 401) {
-            LF.auth.clearSession();
-            updateUIAfterLoginChange();
-            return;
-        }
         LF.log.error('加载人脸列表失败: ' + err.message);
         grid.innerHTML = '<div class="error-state">加载失败，请检查后端服务</div>';
     }
@@ -237,11 +190,10 @@ function renderFaces(faces) {
     const grid = document.getElementById('facesGrid');
     const sorted = sortFaces(faces, currentSort);
 
-    // 只更新「人脸列表」标题旁的条数（统计卡片已按需求删除）
+    // 更新「人脸列表」标题旁的条数
     setTextIfPresent('facesCount', `${sorted.length || 0} 条记录`);
 
     if (!sorted.length) {
-        // 空状态不再使用图标（原先是一个 emoji）
         grid.innerHTML = `
             <div class="empty-state-large">
                 <p>暂无注册人脸</p>
@@ -254,10 +206,6 @@ function renderFaces(faces) {
     let html = '';
     sorted.forEach((face, i) => {
         const registerTime = face.register_time ? new Date(face.register_time).toLocaleString() : '未知';
-        // 状态徽标：圆点用纯 CSS 画，不再使用 ●（U+25CF）。
-        // 虽然 ● 不是 emoji 码位，但在本机由 seguiemj 字体提供，
-        // 实际渲染出来就是彩色实心圆点（已用 Chrome 截图确认），
-        // 与用户要求去掉的 emoji 观感一致，因此一并替换。
         const onlineBadge = face.is_online
             ? (face.is_away
                 ? '<span class="badge badge-away"><i class="badge-dot"></i>暂离中</span>'
@@ -276,15 +224,8 @@ function renderFaces(faces) {
             ? `<button class="btn-checkout" data-action="checkout">签退</button>`
             : `<button class="btn-checkin" data-action="checkin">签到</button>`;
 
-        // 说明：原先这里还有一个「账单」按钮。
-        // 按需求已删除 —— 账单不再单独查询，改为**签退结算成功后自动弹出**
-        // 支付弹窗（二维码 + 支付链接），避免「没签退也能出账」的困惑。
-
-        // 注意：名字只进 data-name 属性（经 escapeHtml 处理），绝不拼进 onclick。
-        // 旧版把名字插进 onclick="f('...')" 且只做了 \' 转义，可被注入。
-        //
-        // 头像位置按需求置空：原先那个紫色圆形头像（内含名字首字）已删除，
-        // 只留一个空白占位维持卡片内各行的对齐间距。
+        // 名字只进 data-name 属性（经 escapeHtml 处理），绝不拼进 onclick
+        // 头像位置留空占位，维持卡片内各行的对齐间距
         html += `
             <div class="face-card-item" data-name="${escapeHtml(face.name)}">
                 <div style="font-weight:700; color:var(--text-secondary); min-width:30px;"># ${i + 1}</div>
@@ -305,8 +246,8 @@ function renderFaces(faces) {
     grid.innerHTML = html;
 }
 
-// 事件委托：所有按钮通过 data-action + 最近的 [data-name] 定位目标人脸。
-// 这样用户数据永远不进入 HTML 属性里的可执行上下文。
+// 事件委托：所有按钮通过 data-action + 最近的 [data-name] 定位目标人脸，
+// 用户数据不进入 HTML 属性里的可执行上下文
 document.getElementById('facesGrid').addEventListener('click', function (event) {
     const button = event.target.closest('button[data-action]');
     if (!button) return;
@@ -326,17 +267,12 @@ document.getElementById('facesGrid').addEventListener('click', function (event) 
 
 //特殊字符转义
 function escapeHtml(str) {
-    // 统一使用 api.js 的实现，旧版漏掉了引号与单引号
+    // 统一使用 api.js 的实现
     return LF.escapeHtml(str);
 }
 
 /**
- * 安全地给元素设置文字。
- *
- * 用于那些"元素可能已不存在"的情况 —— 例如统计卡片按需求删除后，
- * ``totalCount`` / ``onlineCount`` 就不在 DOM 里了。
- * 直接 ``getElementById(...).innerText = ...`` 会因 null 抛错，
- * 且这个错会中断后面的渲染逻辑。
+ * 安全地给元素设置文字：元素不存在时跳过，避免 null 抛错中断后续渲染
  */
 function setTextIfPresent(id, value) {
     const el = document.getElementById(id);
@@ -345,12 +281,6 @@ function setTextIfPresent(id, value) {
 
 //预览
 async function previewFace(name) {
-    if (!isLoggedIn()) {
-        alert('请先登录');
-        if (typeof showLoginModal === 'function') showLoginModal();
-        return;
-    }
-
     const modal = document.getElementById('previewModal');
     const img = document.getElementById('modalImg');
     const info = document.getElementById('modalInfo');
@@ -372,12 +302,6 @@ async function previewFace(name) {
         info.innerHTML = ` ${escapeHtml(name)} 注册时的照片 | 点击图片放大`;
         img.onclick = () => window.open(url, '_blank');
     } catch (err) {
-        if (err.status === 401) {
-            LF.toast('请先登录', true);
-            closePreview();
-            if (typeof showLoginModal === 'function') showLoginModal();
-            return;
-        }
         info.innerHTML = ` 加载失败: ${escapeHtml(err.message)}`;
     }
 }
@@ -387,8 +311,7 @@ function closePreview() {
     const modal = document.getElementById('previewModal');
     const img = document.getElementById('modalImg');
     modal.style.display = 'none';
-    // 只 revoke 我们自己创建的 objectURL（旧版直接 revoke img.src，
-    // 若 src 是普通路径会抛错，且容易重复 revoke）
+    // 只 revoke 我们自己创建的 objectURL
     if (img.dataset.objectUrl) {
         URL.revokeObjectURL(img.dataset.objectUrl);
         delete img.dataset.objectUrl;
@@ -398,12 +321,6 @@ function closePreview() {
 
 //删 调用face.delete
 async function deleteFace(name) {
-    if (!isLoggedIn()) {
-        LF.toast('请先登录', true);
-        if (typeof showLoginModal === 'function') showLoginModal();
-        return;
-    }
-
     if (!confirm(`确定要删除 "${name}" 吗？此操作不可恢复。`)) return;
 
     try {
@@ -411,11 +328,6 @@ async function deleteFace(name) {
         LF.toast(`已删除 ${name}`, false);
         loadFaces();
     } catch (err) {
-        if (err.status === 401) {
-            LF.toast('请先登录', true);
-            if (typeof showLoginModal === 'function') showLoginModal();
-            return;
-        }
         LF.toast('删除失败：' + err.message, true);
     }
 }
@@ -434,8 +346,6 @@ function closeCheckinConfirmModal() {
 }
 
 document.getElementById('confirmCheckinBtn').addEventListener('click', async () => {
-    // 说明：旧版要传 request_times=999 来绕过前端的帧计数去抖；
-    // 新接口不再接受该字段，去抖由服务端负责。
     const button = document.getElementById('confirmCheckinBtn');
     button.disabled = true;
     try {
@@ -450,14 +360,14 @@ document.getElementById('confirmCheckinBtn').addEventListener('click', async () 
     }
 });
 
-/** 把 Date 转成 datetime-local 控件需要的本地时间字符串（精确到秒）。 */
+/** 把 Date 转成 datetime-local 控件需要的本地时间字符串（精确到秒） */
 function toLocalInputValue(date) {
     const pad = n => String(n).padStart(2, '0');
     return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
         + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
 }
 
-/** datetime-local 控件的值 -> 提交给后端的字符串（无时区，服务端按本地时间解释）。 */
+/** datetime-local 控件的值 -> 提交给后端的字符串（无时区，服务端按本地时间解释） */
 function fromLocalInputValue(value) {
     if (!value) return null;
     // 控件在 step=1 时给出 "YYYY-MM-DDTHH:MM" 或 "YYYY-MM-DDTHH:MM:SS"
@@ -469,10 +379,7 @@ function showCheckoutModal(name) {
     const face = facesData.find(f => f.name === name);
     if (!face) return;
 
-    // ── 关键修复（保留）──────────────────────────────────────────────────
-    // 旧版把「在线且未暂离」默认勾选为「暂离」，而暂离走的是不结算分支，
-    // 返回的 session_minutes / amount 必然为 0，表现为「无论多久都是 0 分钟 0 元」。
-    // 现在默认永远是「签退结算」，暂离必须由用户显式勾选。
+    // 默认永远是「签退结算」，暂离必须由用户显式勾选
     const awayCheckbox = document.getElementById('checkoutAway');
     if (awayCheckbox) awayCheckbox.checked = false;
 
@@ -496,9 +403,7 @@ function showCheckoutModal(name) {
         checkinEl.value = checkinDate ? checkinDate.toLocaleString() : '未签到';
     }
 
-    // 在场时长（分钟）—— 这是主要输入：直接填分钟数，金额随填随算。
-    // 服务端会把签到时间顺推到这个时长，因此**不存在"时间不合理"的情况**，
-    // 也就不会再弹出"签退时间不能晚于当前时刻"之类的报错。
+    // 在场时长（分钟）—— 主要输入：直接填分钟数，金额随填随算
     if (durationEl) {
         durationEl.value = '';
         durationEl.disabled = !isOnline;
@@ -506,20 +411,12 @@ function showCheckoutModal(name) {
         durationEl.placeholder = '例如 600 表示 10 小时';
     }
 
-    // 默认签退时间 = 现在（精确到秒），可由用户改成真实离开时间。
-    //
-    // 这里必须**先清空再赋值**：Chrome 的"表单值恢复"会在页面加载/重开弹窗时
-    // 把上一次的值塞回 datetime-local 控件，并且会覆盖脚本刚赋的值。
-    // 实测后果很严重 —— 控件里留着上一次的旧时刻，用户直接点确认，
-    // 服务端就按那个旧时刻结算，于是"签退后账单全是 0"
-    //（日志里可见：计费秒数=3 / 11）。
+    // 默认签退时间 = 现在（精确到秒），可由用户改成真实离开时间
+    // 必须先清空再赋值，避免 Chrome 的表单值恢复把上一次的值塞回控件
     if (customEl) {
         customEl.value = '';
         customEl.value = toLocalInputValue(new Date());
-        // 上限 = 当前时刻：计费只能结算**已经过去**的时间，
-        // 选未来时刻是无效的（旧实现会把它静默夹回"现在"，导致莫名其妙的 0 元账单）。
-        // 这里先按本机时钟设一个上限，稍后用服务端返回的 server_now 校正，
-        // 避免浏览器时钟比服务端快而误判。
+        // 上限 = 当前时刻，稍后用服务端返回的 server_now 校正
         customEl.max = toLocalInputValue(new Date());
         // 记录"用户是否手动改过"，用于区分默认值与用户意图
         customEl.dataset.edited = '0';
@@ -535,7 +432,7 @@ function showCheckoutModal(name) {
         if (customEl) customEl.disabled = true;
         if (hint) hint.textContent = '该人脸当前没有进行中的会话。请先签到后再操作。';
     } else {
-        // 标题不带括号：按需求去掉冗余括号
+        // 标题不带括号
         if (title) title.textContent = isAway ? '暂离中 · 签退结算' : '签退结算';
         if (button) {
             button.textContent = '确认签退结算';
@@ -560,8 +457,7 @@ function showCheckoutModal(name) {
         const rate = serverStatus.rate_per_minute || 0;
         const awayMinutes = serverStatus.away_minutes || 0;
 
-        // 以「在场时长（分钟）」为准预演：这是用户主要填的字段。
-        // 没填时回落到「签到时间 -> 签退时间」的实际流逝。
+        // 以「在场时长（分钟）」为准预演，没填时回落到「签到时间 -> 签退时间」的实际流逝
         const raw = durationEl && durationEl.value !== '' ? Number(durationEl.value) : null;
         const settleValue = customEl && customEl.value ? customEl.value : null;
         const settleDate = settleValue ? new Date(settleValue) : new Date();
@@ -630,7 +526,7 @@ function showCheckoutModal(name) {
     }
 }
 
-/** 把分钟数格式化成「X 小时 Y 分钟」。 */
+/** 把分钟数格式化成「X 小时 Y 分钟」 */
 function formatMinutes(totalMinutes) {
     const total = Math.max(0, Math.floor(Number(totalMinutes) || 0));
     const hours = Math.floor(total / 60);
@@ -672,22 +568,17 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
         return;
     }
 
-    // 以「在场时长（分钟）」为准：服务端据此把签到时间顺推到该时长。
-    //
-    // 这样就不存在"时间不合理"的情况 —— 用户填 600 就是 600 分钟（10 小时），
-    // 金额随之确定，不会再出现"签退时间不能晚于当前时刻"之类的报错。
+    // 以「在场时长（分钟）」为准：服务端据此把签到时间顺推到该时长
     const payload = { name: checkoutTargetName, away: false };
     const rawDuration = durationEl && durationEl.value !== '' ? Number(durationEl.value) : null;
     if (rawDuration !== null && isFinite(rawDuration) && rawDuration >= 0) {
         payload.duration_minutes = Math.floor(rawDuration);
     }
 
-    // 签退时间：仅当用户明确改过时才传（默认交给服务端的当前时钟，
-    // 避免浏览器"表单值恢复"塞回旧值造成 0 元账单）。
+    // 签退时间：仅当用户明确改过时才传（默认交给服务端的当前时钟）
     if (customEl && customEl.dataset.edited === '1' && customEl.value) {
         payload.checkout_time = fromLocalInputValue(customEl.value);
-        // 用户把签退时间改早了：若又没填时长，就用实际已流逝的分钟数，
-        // 让"签到时间"顺推后与签退时间保持自洽（否则会算出 0 分钟）。
+        // 用户把签退时间改早了又没填时长：用实际已流逝的分钟数，与签退时间保持自洽
         if (payload.duration_minutes === undefined) {
             const elapsed = serverStatus && serverStatus.elapsed_minutes
                 ? serverStatus.elapsed_minutes : 0;
@@ -698,9 +589,7 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
     try {
         const data = await LF.api.post('/sessions/checkout', payload);
 
-        // 必须区分「暂离」与「签退结算」：
-        // 暂离不结算，此时 session_minutes / amount 必然是 0，
-        // 若按签退文案展示就会误导为「0 分钟 0 元」。
+        // 区分「暂离」与「签退结算」：暂离不结算，session_minutes / amount 为 0
         const isAwayAction = data.is_away_action === true || away;
         const settled = data.settled === true;
 
@@ -735,16 +624,9 @@ document.getElementById('confirmCheckoutBtn').addEventListener('click', async ()
 /* ==================== 支付 ==================== */
 
 /**
- * 二维码占位图：**只写「开发中」三个字，不加任何样式**。
- *
- * 需求：二维码内容暂且写文字「开发中」，等接入真实收银台后再替换为下单结果。
- *
- * 实现：用内联 SVG（data URI），只放一行文字 —— 没有边框、没有配色、
- * 没有额外说明。这样既不新增静态资源、不依赖网络，也不会让人误以为
- * 那是一张真的二维码。
- *
+ * 二维码占位图：内联 SVG（data URI），只写「开发中」文字
  * 接入真实支付时，把 ``showPayModal`` 里赋给 ``qrcode.src`` 的值换成
- * 服务端返回的二维码地址即可。
+ * 服务端返回的二维码地址即可
  */
 function buildPlaceholderQrSvg(text) {
     const label = text || '开发中';
@@ -752,18 +634,16 @@ function buildPlaceholderQrSvg(text) {
         + '<text x="100" y="100" text-anchor="middle" dominant-baseline="middle"'
         + ' font-size="28">' + label + '</text>'
         + '</svg>';
-    // 用 encodeURIComponent 而不是 base64，便于直接阅读与排查
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
 /**
- * 签退结算成功后展示的支付弹窗。
+ * 签退结算成功后展示的支付弹窗
  *
  * @param {string} name  人脸名
  * @param {object} data  /sessions/checkout 的响应（已结算）
  *
- * 金额与时长直接取自签退响应 —— 那是服务端的权威结算结果，
- * 不再二次查询、也不允许前端改动。
+ * 金额与时长直接取自签退响应（服务端的权威结算结果），不再二次查询
  */
 function showPayModal(name, data) {
     const modal = document.getElementById('payModal');
@@ -780,7 +660,7 @@ function showPayModal(name, data) {
         if (el) el.value = text;
     };
 
-    /** 把服务端时间戳格式化成「2026/10/16 04:30:51」。 */
+    /** 把服务端时间戳格式化成「2026/10/16 04:30:51」 */
     const fmtTime = (value) => {
         if (!value) return '—';
         const date = new Date(value);
@@ -810,10 +690,7 @@ function showPayModal(name, data) {
             + (away ? '（其中暂离 ' + formatMinutes(away) + '）' : '')
             + '，计费 ' + minutes + ' 分钟，应付 ¥ ' + amount.toFixed(2) + '。';
 
-        // 明确写出"为什么是 0"。
-        // 实测用户看到"全 0"会立刻认为是缺陷，但绝大多数情况是
-        // **签到到签退确实不足 1 分钟**（例如签完到 7 秒就点了签退）。
-        // 把两个时刻与计费秒数摆出来，用户自己就能核对，不必回来问。
+        // 金额为 0 时明确写出原因，便于用户自行核对
         if (amount <= 0) {
             const seconds = Math.max(0, Math.floor(data.elapsed_seconds || 0));
             text += ' 签到到签退不足 1 分钟'
@@ -871,7 +748,7 @@ window.closePayModal = closePayModal;
 // 页面可见性变化时刷新
 document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') {
-        updateUIAfterLoginChange();
+        reloadFaces();
     }
 });
 
@@ -886,7 +763,7 @@ document.addEventListener('keydown', function(e) {
 
 async function init() {
     await checkBackend();
-    updateUIAfterLoginChange();
+    reloadFaces();
 }
 
 document.getElementById('refreshBtn').onclick = () => loadFaces();
@@ -894,13 +771,11 @@ document.getElementById('refreshBtn').onclick = () => loadFaces();
 // 每30秒自动刷新
 setInterval(() => {
     if (document.visibilityState === 'visible') {
-        updateUIAfterLoginChange();
+        reloadFaces();
     }
 }, 30000);
 
-// 「仅标记暂离」勾选状态变化时，同步标题与按钮文案。
-// 旧版这里改的是 label 文案（for="checkoutDuration"），但该 label 在新结构里
-// 已改为只读展示，因此改为同步真正会变化的两处：标题与确认按钮。
+// 「仅标记暂离」勾选状态变化时，同步标题与按钮文案
 document.getElementById('checkoutAway')?.addEventListener('change', function () {
     const title = document.getElementById('checkoutTitle');
     const button = document.getElementById('confirmCheckoutBtn');

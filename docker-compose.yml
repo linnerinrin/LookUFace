@@ -1,13 +1,5 @@
 # ============================================================================
 # LookUFace 编排
-#
-# 相对旧版的改进：
-#   1. 旧版 .dockerignore 排除了 models/，compose 却挂载 ./models —— 两者策略冲突，
-#      结果镜像里没有模型、只能依赖挂载，而挂载缺失就静默降级。
-#      现在 models 不再被 .dockerignore 排除，且默认挂载为只读。
-#   2. 增加 SQLite 数据文件的持久化与备份目录说明。
-#   3. 增加资源限制与日志轮转，避免日志无限增长撑满磁盘。
-#   4. 健康检查改为调用 /api/v1/health 并检查 status 字段。
 # ============================================================================
 
 services:
@@ -16,15 +8,12 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    image: lookuface:1.1.0
+    image: lookuface:1.2.0
     container_name: lookuface
     restart: unless-stopped
 
     ports:
-      # 宿主机端口 : 容器内端口。
-      # 容器内保持 8000（Dockerfile 的 EXPOSE 与健康检查都按 8000 写），
-      # 对外暴露到 8835，与本机直跑时的 .env PORT 保持一致，
-      # 这样浏览器里记的地址在两种运行方式下都一样。
+      # 宿主机端口 : 容器内端口
       - "8835:8000"
 
     env_file:
@@ -35,8 +24,8 @@ services:
       LOG_DIR: "/app/logs"
       STORAGE_DIR: "/app/storage"
       HOST: "0.0.0.0"
-      # 容器内端口固定 8000（与 ports/EXPOSE/健康检查一致）；
-      # 注意 .env 里若写了 ALLOWED_ORIGINS，需包含对外访问的 8835。
+      # 容器内端口固定 8000（与 ports/EXPOSE/健康检查一致）
+      # 注意 .env 里若写了 ALLOWED_ORIGINS，需包含对外访问的 8835
       PORT: "8000"
       DEBUG: "False"
 
@@ -66,7 +55,6 @@ services:
       retries: 3
       start_period: 40s
 
-    # 摄像头推流是 IO 密集 + 推理是 CPU 密集，给一个合理的上限
     deploy:
       resources:
         limits:

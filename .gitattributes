@@ -20,8 +20,6 @@
 *.txt   text eol=lf
 .gitignore      text eol=lf
 .gitattributes  text eol=lf
-.dockerignore   text eol=lf
-Dockerfile      text eol=lf
 
 # 二进制：不做任何行尾转换
 *.png   binary

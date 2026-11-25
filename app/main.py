@@ -77,10 +77,7 @@ def create_app() -> FastAPI:
     async def index() -> RedirectResponse:
         return RedirectResponse(url="/static/idx.html", status_code=307)
 
-    # 浏览器图标请求沿用静态资源跳转
-    @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon() -> RedirectResponse:
-        return RedirectResponse(url="/static/logo.png", status_code=307)
+    # 浏览器图标由各页面 head 里的内联 SVG(data URI) 提供，不再需要服务端路由
 
     return app
 

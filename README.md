@@ -55,18 +55,6 @@ Windows 下也可以直接跑 `start.bat`。
 四个页面共用 `api.js`（请求封装 / 提示 / 主题）与 `manager.css` 的主题变量；
 深色模式在任意一页切换后，其余页面通过 `localStorage` + `storage` 事件同步。
 
-### Docker
-
-```bash
-cp .env.example .env
-docker build -t lookuface:1.2.0 .
-docker compose up -d --build        # 端口/卷/健康检查已编排
-docker compose logs -f              # 看日志
-docker compose down                 # 停止
-```
-
-容器内固定监听 8000，compose 映射到宿主机 8835。
-
 ### 测试
 
 ```bash
@@ -117,7 +105,7 @@ detector/
 ├── models/                   opencv_face_detector 的 prototxt + 权重
 ├── tests/                    契约 / 会话流水 / 前端与主题 / 死功能守门
 ├── pyproject.toml            依赖与工具配置的唯一真源
-├── Dockerfile  docker-compose.yml  start.bat
+├── start.bat                 Windows 一键启动（建 venv、装依赖、起服务）
 └── README.md
 ```
 
@@ -133,7 +121,7 @@ detector/
 | 图像处理 | OpenCV / NumPy |
 | 数据看板图表 | matplotlib（服务端异步渲染 PNG，中文字体自动探测） |
 | 前端 | 原生 HTML/JavaScript/CSS（无构建链），WebSocket 推帧 |
-| 部署 | Docker 多阶段构建 + docker compose |
+| 部署 | 本机直跑（`python -m app` 或 `start.bat`） |
 | 测试 | pytest（含 starlette TestClient 契约测试） |
 
 ---

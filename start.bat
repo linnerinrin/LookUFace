@@ -67,7 +67,7 @@ set "NEED_INSTALL=1"
 
 :CHECK_DEPS
 echo [2/4] Checking dependencies...
-"%VENV_PY%" -c "import fastapi, cv2, mediapipe, sqlalchemy, jose, qrcode" >nul 2>&1
+"%VENV_PY%" -c "import fastapi, cv2, mediapipe, sqlalchemy, matplotlib" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
 
 if "%NEED_INSTALL%"=="0" (
@@ -77,7 +77,7 @@ if "%NEED_INSTALL%"=="0" (
 
 echo        Missing dependencies, installing (network required)...
 "%VENV_PY%" -m pip install -e . --disable-pip-version-check
-"%VENV_PY%" -c "import fastapi, cv2, mediapipe, sqlalchemy, jose, qrcode" >nul 2>&1
+"%VENV_PY%" -c "import fastapi, cv2, mediapipe, sqlalchemy, matplotlib" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo [WARNING] Some dependencies are still missing.

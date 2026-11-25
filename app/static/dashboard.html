@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据看板</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234a90e2'/%3E%3Cpath d='M14 46V30m12 16V20m12 26V34m12 12V24' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="manager.css">
+    <link rel="stylesheet" href="dashboard.css?v=3">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <nav class="nav-menu">
+                <a href="idx.html" class="nav-item">
+                    <span>实时识别</span>
+                </a>
+                <a href="manager.html" class="nav-item">
+                    <span>仓库管理</span>
+                </a>
+                <a href="dashboard.html" class="nav-item active">
+                    <span>数据看板</span>
+                </a>
+                <a href="settings.html" class="nav-item">
+                    <span>场地设置</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button id="themeToggle" class="sidebar-btn">
+                    <span>切换主题</span>
+                </button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <h1>数据看板</h1>
+                <div class="board-actions">
+                    <select id="daysRange" aria-label="趋势天数">
+                        <option value="7">近 7 天</option>
+                        <option value="30">近 30 天</option>
+                    </select>
+                    <button id="refreshBtn" class="btn btn-outline" type="button">刷新</button>
+                </div>
+            </header>
+
+            <section class="add-card">
+                <div class="add-card-title">添加数据</div>
+                <form class="add-form" id="addForm">
+                    <div class="field">
+                        <label for="recordName">选择用户</label>
+                        <select id="recordName" required></select>
+                    </div>
+                    <div class="field">
+                        <label for="checkinAt">签到时间</label>
+                        <input type="datetime-local" id="checkinAt" required>
+                    </div>
+                    <div class="field">
+                        <label for="checkoutAt">退出时间</label>
+                        <input type="datetime-local" id="checkoutAt" required>
+                    </div>
+                    <button class="btn btn-primary" type="submit">添加记录</button>
+                </form>
+            </section>
+
+            <section class="kpi-grid" id="kpiGrid">
+                <div class="kpi-card"><div class="kpi-label">今日到场</div><div class="kpi-value" id="kpiVisits">—</div></div>
+                <div class="kpi-card"><div class="kpi-label">当前在场</div><div class="kpi-value" id="kpiOnline">—</div></div>
+                <div class="kpi-card"><div class="kpi-label">今日累计时长</div><div class="kpi-value" id="kpiMinutes">—<span class="kpi-unit">分钟</span></div></div>
+                <div class="kpi-card"><div class="kpi-label">平均在场时长</div><div class="kpi-value" id="kpiAverage">—<span class="kpi-unit">分钟</span></div></div>
+            </section>
+
+            <section class="chart-grid" id="chartGrid">
+                <div class="chart-card"><img id="chart_user_ranking" alt="用户在场时长排行"></div>
+                <div class="chart-card"><img id="chart_daily_trend" alt="近 N 日到场趋势"></div>
+                <div class="chart-card"><img id="chart_hour_distribution" alt="到场时段分布"></div>
+                <div class="chart-card"><img id="chart_duration_buckets" alt="单次在场时长分布"></div>
+                <div class="chart-card"><img id="chart_heatmap" alt="用户与日期热力图"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="api.js?v=4"></script>
+    <script src="dashboard.js?v=4"></script>
+</body>
+</html>

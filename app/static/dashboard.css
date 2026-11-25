@@ -1,0 +1,148 @@
+/* dashboard.css - 数据看板专用样式，主题变量复用 manager.css */
+
+.top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+
+.board-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.board-actions select {
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--input-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+/* 添加数据卡片 */
+.add-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--sidebar-border);
+    border-radius: 18px;
+    padding: 20px 24px;
+    box-shadow: var(--card-shadow);
+    margin-bottom: 24px;
+}
+
+.add-card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+}
+
+.add-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 16px;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.field label {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.field input,
+.field select {
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--input-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    min-width: 190px;
+}
+
+/* KPI 四卡 */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.kpi-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--sidebar-border);
+    border-radius: 18px;
+    padding: 18px 20px;
+    box-shadow: var(--card-shadow);
+}
+
+.kpi-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.kpi-value {
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.kpi-unit {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
+
+/* 图表网格 */
+.chart-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+
+.chart-card {
+    background: var(--card-bg-solid);
+    border: 1px solid var(--sidebar-border);
+    border-radius: 18px;
+    padding: 18px 20px;
+    box-shadow: var(--card-shadow);
+}
+
+.chart-card img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+}
+
+.board-empty {
+    color: var(--text-secondary);
+    font-size: 14px;
+    padding: 40px 0;
+    text-align: center;
+}
+
+@media (max-width: 1100px) {
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .chart-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+    .kpi-grid { grid-template-columns: 1fr; }
+    .add-form { flex-direction: column; align-items: stretch; }
+    .field input, .field select { min-width: 0; width: 100%; }
+}

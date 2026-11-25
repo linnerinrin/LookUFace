@@ -15,6 +15,6 @@
         wsPath: '/api/v1/ws/camera'
     });
 
-    // 供调试：控制台可访问 window.__entryApp
+    // 供调试：浏览器开发者工具可访问 window.__entryApp
     window.__entryApp = app;
 })();

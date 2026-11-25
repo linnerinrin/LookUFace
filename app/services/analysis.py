@@ -1,6 +1,4 @@
-# """架构作用：把视觉检测、人口属性推理、特征库读取与身份匹配封装为帧级分析能力"""
-# """模块：输出人脸框、属性、身份和耗时；以特征库快照缓存和ROI匹配缓存减少重复推理"""
-"""人脸分析编排：检测 → 性别年龄 → 身份识别，并带识别结果缓存
+"""人脸分析编排：检测 → 身份识别，并带识别结果缓存
 
 1. **识别结果缓存**：对 ``(特征库世代, 已知人脸数, 阈值, ROI指纹)`` 做短TTL缓存，
    同一张脸在TTL内只算一次
@@ -23,11 +21,9 @@ import numpy as np
 
 from app.config import settings
 from app.core.errors import AppError, FaceQualityError
-from app.db.models import SessionLocal, UserFace
+from app.db.models import SessionLocal
 from app.db.repository import list_faces
-from app.logger import logger
 from app.vision.base import inference_lock
-from app.vision.demographics import Demographics, get_gender_age_model
 from app.vision.detection import FaceBox, get_face_detector
 from app.vision.face_identity import (
     StoredFeatureError,
@@ -47,9 +43,6 @@ class AnalyzedFace:
     """单张人脸的完整分析结果"""
 
     bbox: list[int]
-    gender: str = UNKNOWN
-    age: str = UNKNOWN
-    confidence: float = 0.0
     identity: str = UNKNOWN
     identity_confidence: float = 0.0
     detection_confidence: float = 0.0
@@ -174,7 +167,6 @@ class FaceAnalysisService:
         self,
         image: np.ndarray,
         *,
-        detect_gender_age: bool = True,
         detect_identity: bool = True,
     ) -> FrameAnalysis:
         """分析整帧图像"""
@@ -187,7 +179,6 @@ class FaceAnalysisService:
         except AppError:
             raise
         except Exception:
-            logger.exception("人脸检测失败")
             boxes = []
 
         # 识别所需的已知特征只查一次
@@ -201,7 +192,6 @@ class FaceAnalysisService:
                 self._analyze_single_face(
                     image,
                     box,
-                    detect_gender_age=detect_gender_age,
                     detect_identity=detect_identity,
                     known=known,
                 )
@@ -210,13 +200,12 @@ class FaceAnalysisService:
         elapsed_ms = (time.perf_counter() - started) * 1000
         return FrameAnalysis(faces=faces, processing_ms=round(elapsed_ms, 2))
 
-    # 同一裁剪ROI依次送入可选属性模型与身份模型；空裁剪保留框信息并返回Unknown字段
+    # 裁剪ROI送入身份模型；空裁剪保留框信息并返回Unknown字段
     def _analyze_single_face(
         self,
         image: np.ndarray,
         box: FaceBox,
         *,
-        detect_gender_age: bool,
         detect_identity: bool,
         known: list[tuple[str, np.ndarray]],
     ) -> AnalyzedFace:
@@ -226,30 +215,12 @@ class FaceAnalysisService:
         if roi.size == 0:
             return result
 
-        if detect_gender_age:
-            demo = self._safe_demographics(roi)
-            result.gender = demo.gender
-            result.age = demo.age
-            result.confidence = round(demo.confidence, 4)
-
         if detect_identity:
             name, score = self._recognize(roi, known)
             result.identity = name
             result.identity_confidence = round(score, 4)
 
         return result
-
-    # 属性推理失败只降级这一张脸的属性，身份识别仍可继续；业务异常和意外异常分级记录
-    @staticmethod
-    def _safe_demographics(roi: np.ndarray) -> Demographics:
-        try:
-            return get_gender_age_model().predict(roi)
-        except AppError as exc:
-            logger.warning("性别年龄不可用：%s", exc.message)
-            return Demographics()
-        except Exception:
-            logger.exception("性别年龄推理异常")
-            return Demographics()
 
     # ------------------------------------------------------------------ #
     # 识别
@@ -288,15 +259,10 @@ class FaceAnalysisService:
         for record in records:
             try:
                 known.append((record.name, deserialize_features(record.features)))
-            except StoredFeatureError as exc:
+            except StoredFeatureError:
                 # 旧pickle记录：不复用、不反序列化
-                logger.warning("人脸 %s 的特征不可用（%s）", record.name, exc)
+                continue
 
-        logger.debug(
-            "已载入 %d 条人脸特征（缓存 %.1f 秒）",
-            len(known),
-            self.KNOWN_FEATURES_TTL_SECONDS,
-        )
         return known
 
     # 缓存未命中才提取探针特征，遍历库中矩阵取最高相似度，再用配置阈值决定是否接受身份
@@ -327,12 +293,10 @@ class FaceAnalysisService:
         except AppError:
             return UNKNOWN, 0.0
         except Exception:
-            logger.exception("特征提取异常")
             return UNKNOWN, 0.0
 
         threshold = settings.RECOGNIZE_THRESHOLD
         best_name, best_score = UNKNOWN, 0.0
-        mismatched: list[str] = []
         for name, matrix in known:
             try:
                 score = embedder.compare(probe, matrix)
@@ -343,19 +307,9 @@ class FaceAnalysisService:
                 # 不会有任何报错。正因如此，特征维度必须保持不变
                 # （见app/vision/face_identity.py中关于468/478的说明）：
                 # 一旦新旧特征维度不同，识别会无声失效而很难被发现
-                mismatched.append(f"{name}({matrix.shape[0]})")
                 continue
             if score > best_score:
                 best_name, best_score = name, score
-
-        if mismatched:
-            logger.warning(
-                "有 %d 条人脸特征维度与当前算法不一致，已跳过（这些脸无法被识别，"
-                "请重新注册）：%s；当前特征维度=%d",
-                len(mismatched),
-                ", ".join(mismatched),
-                probe.shape[0],
-            )
 
         if best_score < threshold:
             best_name = UNKNOWN

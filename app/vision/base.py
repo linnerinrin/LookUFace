@@ -1,4 +1,3 @@
-# """架构作用：统一视觉模型生命周期、并发锁、DNN加载与启动预检"""
 """视觉模型基座：线程安全的单例加载
 
 本模块提供：
@@ -19,7 +18,6 @@ from typing import Any, Callable, ClassVar, Generic, TypeVar
 
 from app.config import settings
 from app.core.errors import ModelUnavailableError, NotFoundError
-from app.logger import logger
 
 T = TypeVar("T")
 
@@ -37,7 +35,7 @@ class ThreadSafeModel(Generic[T]):
     _instances: ClassVar[dict[type, Any]] = {}
     _instances_lock: ClassVar[threading.Lock] = threading.Lock()
 
-    # """方法：双检锁懒加载每个子类的模型实例"""
+    # 方法：双检锁懒加载每个子类的模型实例
     @classmethod
     def instance(cls) -> T:
         # 快路径：已构造则直接返回，避免每次取锁
@@ -54,7 +52,6 @@ class ThreadSafeModel(Generic[T]):
             cls._instances[cls] = obj
             return obj
 
-    # """方法：移除缓存引用并主动释放实例资源（若实例提供close()）"""
     @classmethod
     def reset(cls) -> None:
         """丢弃单例并释放其资源（仅测试使用）"""
@@ -66,9 +63,9 @@ class ThreadSafeModel(Generic[T]):
                 try:
                     close()
                 except Exception:
-                    logger.exception("释放模型资源失败：%s", cls.__name__)
+                    pass
 
-    # """方法：报告该子类实例是否已成功构建（加载就绪）"""
+    # 方法：报告该子类实例是否已成功构建（加载就绪）
     @classmethod
     def is_loaded(cls) -> bool:
         return cls._instances.get(cls) is not None
@@ -77,7 +74,7 @@ class ThreadSafeModel(Generic[T]):
         raise NotImplementedError
 
     # 便捷访问器
-    # """方法：确认模型文件存在，否则抛出可定位的业务异常"""
+    # 方法：确认模型文件存在，否则抛出可定位的业务异常
     def _require_file(self, path: Path, label: str) -> Path:
         if not path.exists():
             raise NotFoundError(
@@ -87,7 +84,6 @@ class ThreadSafeModel(Generic[T]):
         return path
 
 
-# """函数：读取权重和结构文件，构造OpenCV网络并包装加载错误"""
 def load_dnn_net(model_path: Path, config_path: Path, label: str) -> Any:
     """加载OpenCV DNN网络，失败时抛出可读异常"""
     import cv2
@@ -105,7 +101,6 @@ def load_dnn_net(model_path: Path, config_path: Path, label: str) -> Any:
             f"{label} 模型加载失败：{exc}",
             details={"model_path": str(model_path), "config_path": str(config_path)},
         ) from exc
-    logger.info("%s 模型加载成功", label)
     return net
 
 
@@ -113,7 +108,6 @@ def load_dnn_net(model_path: Path, config_path: Path, label: str) -> Any:
 _preflight_cache: dict[str, bool] | None = None
 
 
-# """函数：遍历必需模型文件，做存在性+可读性+非空完整性检查并汇总"""
 def preflight(force: bool = False) -> dict[str, bool]:
     """启动期模型预检，返回每个文件的就绪状态
 
@@ -137,25 +131,16 @@ def preflight(force: bool = False) -> dict[str, bool]:
             except OSError:
                 ok = False
         result[label] = ok
-        if not ok:
-            logger.error("模型文件不可用（缺失/空/不可读）：%s -> %s", label, path)
-    missing = [k for k, ok in result.items() if not ok]
-    if missing:
-        logger.warning("有 %d 个模型文件不可用，相关功能不可用：%s", len(missing), ", ".join(missing))
-    else:
-        logger.info("全部 %d 个模型文件校验通过", len(result))
     _preflight_cache = result
     return dict(result)
 
 
-# """函数：报告各模型子类的实际加载就绪状态（是否已构建实例）"""
 def load_readiness() -> dict[str, bool]:
     """每个ThreadSafeModel子类是否已加载就绪（成功构建过实例）"""
     with ThreadSafeModel._instances_lock:
         return {cls.__name__: True for cls in ThreadSafeModel._instances}
 
 
-# """装饰器：让一次模型推理在全局可重入锁中串行执行"""
 def guarded(fn: Callable[..., T]) -> Callable[..., T]:
     """把函数体包进全局推理锁"""
 

@@ -1,5 +1,3 @@
-# """模块：人脸库管理与上传分析"""
-# """架构作用：连接上传解码、特征提取、数据库记录和截图存储"""
 """人脸库路由（单租户，无身份校验）"""
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ from app.api.schemas import (
 )
 from app.core.errors import AppError, FaceQualityError, NotFoundError, ValidationError
 from app.db.repository import delete_face, get_face, list_faces, rename_face, upsert_face
-from app.logger import logger
 from app.services.analysis import face_analysis_service
 from app.services.session import session_service
 from app.services.storage import decode_image, delete_file, resolve_stored_path, save_screenshot
@@ -55,7 +52,6 @@ async def list_faces_endpoint(db: DbSession) -> FacesListResponse:
             register_time=record.created_at,
             online_time=int(record.online_time or 0),
             is_online=bool(record.is_online),
-            is_away=bool(record.is_away),
             checkin_time=record.checkin_time,
             features_current=_is_feature_current(record.features),
         )
@@ -83,7 +79,6 @@ async def register_face(
     try:
         features = face_analysis_service.extract_features(image)
     except FaceQualityError as exc:
-        logger.warning("人脸注册被拒 name=%s reason=%s", clean_name, exc.message)
         return FaceRegisterResponse(
             success=False,
             name=clean_name,
@@ -114,7 +109,6 @@ async def register_face(
         delete_file(old_screenshot)
 
     face_analysis_service.clear_cache()
-    logger.info("人脸注册成功 name=%s", clean_name)
     return FaceRegisterResponse(
         success=True,
         name=clean_name,
@@ -168,11 +162,9 @@ async def rename_face_endpoint(
         raise ValidationError("修改失败：目标名称已存在或原记录不存在")
     db.commit()
 
-    # 改名迁移运行态（含暂离起点与累计秒数），历史会话不丢账；
-    # 去抖窗口按记录id索引，改名不影响
+    # 改名要连带迁移运行态（在场标记、签到时刻、累计时长），历史会话不丢账
     session_service.rename_runtime(old_name, new_name)
     face_analysis_service.clear_cache()
-    logger.info("人脸重命名 %s -> %s", old_name, new_name)
     return FaceModifyResponse(success=True, message="修改成功")
 
 
@@ -193,15 +185,13 @@ async def delete_face_endpoint(
     delete_file(face.screenshot)
     session_service.forget_face(clean_name, face_id=face.id)
     face_analysis_service.clear_cache()
-    logger.info("删除人脸 name=%s", clean_name)
     return FaceDeleteResponse(success=True, name=clean_name, message="删除成功")
 
 
-# 一次性分析端点：直接返回检测/属性/身份结果，不触发会话业务
+# 一次性分析端点：直接返回检测/身份结果，不触发会话业务
 @router.post("/analyze", response_model=DetectResponse)
 async def analyze_upload(
     file: UploadFile = File(..., description="待分析图片"),
-    detect_gender_age: bool = Form(default=True),
     detect_identity: bool = Form(default=True),
 ) -> DetectResponse:
     """一次性上传图片做完整分析（调试与第三方集成用）"""
@@ -211,7 +201,6 @@ async def analyze_upload(
     try:
         result = face_analysis_service.analyze_image(
             image,
-            detect_gender_age=detect_gender_age,
             detect_identity=detect_identity,
         )
     except AppError:
@@ -222,9 +211,6 @@ async def analyze_upload(
         faces=[
             FaceInfo(
                 bbox=face.bbox,
-                gender=face.gender,
-                age=face.age,
-                confidence=face.confidence,
                 identity=face.identity,
                 identity_confidence=face.identity_confidence,
                 detection_confidence=face.detection_confidence,

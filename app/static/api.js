@@ -1,10 +1,9 @@
 /**
- * api.js —— 前端公共基础设施（认证、请求、提示、主题）
+ * api.js —— 前端公共基础设施（请求、提示、主题）
  *
  * 本文件提供：
  *  - `LookUFace.api`   统一请求封装（统一错误、网络诊断）
  *  - `LookUFace.toast` 统一提示
- *  - `LookUFace.log`   显式日志上报（仅 error/warn 上报）
  *  - `LookUFace.theme` 主题读写与跨 iframe 同步
  */
 (function (window, document) {
@@ -318,47 +317,6 @@
         }, duration);
     }
 
-    // ------------------------------------------------------------------ //
-    // 日志上报（显式调用）
-    // ------------------------------------------------------------------ //
-
-    var log = {
-        /** 页面标识，用于服务端日志分类 */
-        page: function () {
-            var name = window.location.pathname.split('/').pop();
-            return name || 'unknown';
-        },
-
-        send: function (level, message) {
-            // 只上报 error / warn，避免把调试输出灌进服务端日志
-            if (level !== 'error' && level !== 'warn') return;
-            try {
-                window.fetch(BASE + '/logs/frontend', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        level: level,
-                        message: String(message).slice(0, 2000),
-                        page: this.page()
-                    })
-                }).catch(function () { /* 上报失败不影响业务 */ });
-            } catch (e) { /* ignore */ }
-        },
-
-        error: function (message) { this.send('error', message); },
-        warn: function (message) { this.send('warn', message); }
-    };
-
-    // 兜底捕获未处理错误与 Promise 拒绝
-    window.addEventListener('error', function (event) {
-        if (event && event.message) {
-            log.error(event.message + ' (' + (event.filename || '?') + ':' + (event.lineno || '?') + ')');
-        }
-    });
-    window.addEventListener('unhandledrejection', function (event) {
-        var reason = event && event.reason;
-        log.error('未处理的 Promise 拒绝: ' + (reason && reason.message ? reason.message : reason));
-    });
 
     // ------------------------------------------------------------------ //
     // 主题
@@ -413,7 +371,6 @@
     window.LookUFace = {
         api: api,
         toast: toast,
-        log: log,
         theme: theme,
         escapeHtml: escapeHtml
     };

@@ -1,5 +1,3 @@
-# """模块：数据库引擎、会话与ORM"""
-# """架构作用：定义持久化结构，初始化数据库并管理会话资源"""
 """数据库引擎、会话与ORM模型"""
 
 from __future__ import annotations
@@ -23,7 +21,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
-from app.logger import logger
 
 
 class Base(DeclarativeBase):
@@ -36,22 +33,21 @@ class Base(DeclarativeBase):
 
 
 class UserFace(Base):
-    """人脸记录表（同时承载签到/计费状态）
+    """人脸记录表（承载当前在场状态）
 
     单租户：``name`` 唯一
 
-    注意：本表同时充当「计费状态机」的持久化载体，使用下面四个状态列：
+    本表只保存**当前状态**，历史流水见 :class:`SessionRecord`：
 
-    * ``is_online``     是否处于在线会话中
-    * ``is_away``       在线会话中是否处于暂离
-    * ``checkin_time``  本次会话**开始计费的时刻**（暂离期间不推进）
-    * ``online_time``   历史累计计费分钟数
-    * ``away_since``    当前暂离的起点（非暂离时为NULL），用于重启后精确恢复
-    * ``away_seconds``  本次会话已结算的累计暂离秒数
+    * ``is_online``     是否处于在场会话中
+    * ``checkin_time``  本次会话的签到时刻（签退后置NULL）
+    * ``online_time``   历史累计在场分钟数
+    * ``is_away`` / ``away_since`` / ``away_seconds``
+      暂离语义已移除，三列仅为兼容既有库表而保留，业务代码不再读写
 
     时区约定：所有 ``DateTime`` 列一律保存**部署机器的本地naive时间**
-    （``datetime.now()``），与config / 计费公式保持一致；部署方需保证
-    宿主机时区即业务时区，不做跨时区转换
+    （``datetime.now()``）；部署方需保证宿主机时区即业务时区，
+    不做跨时区转换
     """
 
     __tablename__ = "user_faces"
@@ -64,7 +60,7 @@ class UserFace(Base):
     online_time = Column(Integer, default=0)
     is_online = Column(Boolean, default=False)
     is_away = Column(Boolean, default=False)
-    # 暂离起点与累计暂离秒数随会话持久化，重启后可精确恢复计费状态
+    # 下面三列是暂离时代的遗留列，保留只为兼容既有库表
     checkin_time = Column(DateTime, nullable=True)
     away_since = Column(DateTime, nullable=True)
     away_seconds = Column(Integer, default=0)
@@ -72,6 +68,21 @@ class UserFace(Base):
     __table_args__ = (
         UniqueConstraint("name", name="uq_user_face_name"),
     )
+
+
+class SessionRecord(Base):
+    """进出场流水表"""
+
+    __tablename__ = "session_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, index=True)
+    checkin_at = Column(DateTime, nullable=False)
+    checkout_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, default=0)
+    duration_minutes = Column(Integer, default=0)
+    source = Column(String(16), default="manual")
+    created_at = Column(DateTime, default=datetime.now)
 
 
 # --------------------------------------------------------------------------- #
@@ -100,6 +111,11 @@ if _is_sqlite:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("PRAGMA busy_timeout=5000")
+            # 排序/去重这类操作会建临时文件，默认落在系统TEMP。进程长期运行时
+            # TEMP指向的目录可能被清理，此时SQLite会抛出「unable to open
+            # database file」，看起来像数据库坏了，实际是临时文件建不出来。
+            # 内存临时存储把这条路彻底去掉，数据量（当前百级记录）完全放得下。
+            cursor.execute("PRAGMA temp_store=MEMORY")
         finally:
             cursor.close()
 
@@ -161,9 +177,6 @@ def migrate_to_single_tenant() -> None:
         if not columns or "user_id" not in columns:
             return
 
-        logger.warning(
-            "检测到旧版 user_faces（含 user_id 列），正在迁移为单租户表结构…"
-        )
 
         selected = ", ".join(_FACE_COLUMNS)
         legacy_rows = conn.exec_driver_sql(
@@ -196,27 +209,18 @@ def migrate_to_single_tenant() -> None:
             used.add(name)
             if name != original:
                 renamed += 1
-                logger.warning("迁移时遇到同名人脸，%r 已重命名为 %r", original, name)
             values = (name, *row[1:])
             conn.exec_driver_sql(
                 f'INSERT INTO "user_faces" ({selected}) VALUES ({placeholders})',
                 values,
             )
 
-    logger.warning(
-        "单租户迁移完成：搬迁 %d 条人脸记录（其中 %d 条因重名被重命名）。"
-        "旧数据已备份为 %s，确认数据无误后可手工删除。",
-        len(legacy_rows),
-        renamed,
-        LEGACY_FACE_TABLE,
-    )
-
 
 # 轻量列迁移：旧库缺列时ALTER TABLE补齐（create_all不会给已存在的表加列）
 def migrate_add_columns() -> None:
     """为已存在的 ``user_faces`` 表补齐新增列（幂等）
 
-    当前补齐：``away_since`` / ``away_seconds``（暂离状态持久化）
+    历史迁移：补齐 ``away_since`` / ``away_seconds`` 两列（暂离时代的遗留列）
     """
     if not _is_sqlite:
         return
@@ -231,7 +235,6 @@ def migrate_add_columns() -> None:
             return
         for name, ddl in additions.items():
             if name not in columns:
-                logger.warning("user_faces 缺少列 %s，正在补齐…", name)
                 conn.exec_driver_sql(ddl)
 
 

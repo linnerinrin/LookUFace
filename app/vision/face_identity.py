@@ -1,4 +1,3 @@
-# """架构作用：负责人脸关键点归一化、特征序列化及身份相似度计算"""
 """人脸特征向量提取与比对
 
 1. **相似变换归一化**：去质心 + 除以RMS距离，消除平移与缩放影响
@@ -28,7 +27,6 @@ import numpy as np
 
 from app.config import settings
 from app.core.errors import FaceQualityError, ModelUnavailableError
-from app.logger import logger
 from app.vision.base import inference_lock
 
 # --------------------------------------------------------------------------- #
@@ -65,7 +63,6 @@ class FaceMeshUnavailable(ModelUnavailableError):
     default_message = "人脸关键点模型不可用"
 
 
-# """模块：特征编码；方阵转四位小数JSON，带版本号与维度元数据，加v2前缀供数据库保存"""
 def serialize_features(matrix: np.ndarray) -> bytes:
     """把距离矩阵序列化为可存储字节（含编码版本与维度，供后端迁移时校验）"""
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
@@ -76,7 +73,6 @@ def serialize_features(matrix: np.ndarray) -> bytes:
     return FEATURE_MAGIC + json.dumps(envelope, separators=(",", ":")).encode("utf-8")
 
 
-# """函数：校验版本前缀、编码版本与维度，并拒绝pickle，将JSON恢复为二维方阵"""
 def deserialize_features(blob: bytes) -> np.ndarray:
     """从存储字节恢复距离矩阵。拒绝反序列化旧pickle记录"""
     if not blob:
@@ -118,7 +114,6 @@ def deserialize_features(blob: bytes) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 
 
-# """模块：几何特征流水线；点坐标先去中心再按RMS缩放"""
 def spatial_normalize(points: np.ndarray) -> np.ndarray:
     """相似变换归一化：去质心 + 按RMS距离缩放
 
@@ -131,7 +126,6 @@ def spatial_normalize(points: np.ndarray) -> np.ndarray:
     return centered / rms
 
 
-# """函数：以内积展开距离平方，截断浮点负误差并按最大距离归一化"""
 def pairwise_distance_matrix(points: np.ndarray) -> np.ndarray:
     """计算两两欧氏距离并归一化到 [0, 1]"""
     squared_norms = (points ** 2).sum(axis=1)
@@ -145,7 +139,6 @@ def pairwise_distance_matrix(points: np.ndarray) -> np.ndarray:
     return distances / peak
 
 
-# """函数：相同形状矩阵的平均绝对差映射为相似度；阈值需实测标定"""
 def similarity_from_matrices(left: np.ndarray, right: np.ndarray) -> float:
     """两个距离矩阵的相似度，值域 [0, 1]"""
     if left.shape != right.shape:
@@ -190,7 +183,7 @@ class LandmarkDistanceEmbedder:
         self._mesh_lock = threading.Lock()
 
     # -------- 模型生命周期 --------
-    # """方法：双检锁延迟加载FaceMesh，导入或构造失败映射为模型异常"""
+    # 方法：双检锁延迟加载FaceMesh，导入或构造失败映射为模型异常
     def _ensure_mesh(self) -> Any:
         if self._mesh is not None:
             return self._mesh
@@ -212,10 +205,9 @@ class LandmarkDistanceEmbedder:
                 )
             except Exception as exc:
                 raise FaceMeshUnavailable(f"FaceMesh 初始化失败：{exc}") from exc
-            logger.info("人脸关键点模型加载成功（LandmarkDistanceEmbedder）")
         return self._mesh
 
-    # """方法：先撤下模型引用，再尽力关闭底层FaceMesh资源"""
+    # 方法：先撤下模型引用，再尽力关闭底层FaceMesh资源
     def close(self) -> None:
         mesh, self._mesh = self._mesh, None
         if mesh is not None:
@@ -225,7 +217,6 @@ class LandmarkDistanceEmbedder:
                 pass
 
     # -------- 特征 --------
-    # """方法：验证468/478点输出，仅保留前468点以固定存储维度"""
     @staticmethod
     def normalize_landmarks(landmarks: Any) -> np.ndarray:
         """把mediapipe关键点转成 **(468, 3)** 坐标数组
@@ -252,7 +243,6 @@ class LandmarkDistanceEmbedder:
         # 478 -> 468：丢弃末尾10个虹膜点，保证特征维度恒定
         return points[:LANDMARK_COUNT]
 
-    # """方法：BGR转RGB后加全局推理锁，模型输出转换为固定点数坐标"""
     def _detect_landmarks(self, image: np.ndarray) -> list[np.ndarray]:
         """检测并返回图中每张脸的 (468, 3) 坐标"""
         if image is None or image.size == 0:
@@ -273,7 +263,6 @@ class LandmarkDistanceEmbedder:
             for face in results.multi_face_landmarks
         ]
 
-    # """方法：取检测列表首张脸的关键点，未检出由下游抛质量异常"""
     def extract_landmarks(self, image: np.ndarray) -> np.ndarray:
         """返回 (468, 3) 归一化坐标；未检出人脸时抛 ``FaceQualityError``"""
         return self._detect_landmarks(image)[0]
@@ -282,7 +271,6 @@ class LandmarkDistanceEmbedder:
         points = self.extract_landmarks(image)
         return pairwise_distance_matrix(spatial_normalize(points))
 
-    # """方法：逐脸生成距离矩阵；当前FaceMesh配置max_num_faces=1"""
     def extract_many(self, image: np.ndarray) -> list[np.ndarray]:
         """一张图里可能有多张脸，返回所有特征"""
         return [
@@ -297,7 +285,6 @@ class LandmarkDistanceEmbedder:
 _embedder: IdentityEmbedder | None = None
 
 
-# """模块：后端装配；首次访问创建默认关键点距离后端"""
 def get_embedder() -> IdentityEmbedder:
     """取回全局识别后端（当前为关键点距离矩阵实现）"""
     global _embedder
@@ -306,7 +293,6 @@ def get_embedder() -> IdentityEmbedder:
     return _embedder
 
 
-# """函数：替换全局后端引用；调用方承担旧实例的资源关闭责任"""
 def set_embedder(embedder: IdentityEmbedder | None) -> None:
     """替换识别后端（测试或切换到深度嵌入模型时使用）"""
     global _embedder

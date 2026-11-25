@@ -14,7 +14,6 @@ import urllib.request
 from pathlib import Path
 
 from app.config import settings
-from app.logger import logger
 
 # 每个模型文件的候选下载地址，按序回退
 MODEL_SOURCES: dict[str, list[str]] = {
@@ -23,20 +22,6 @@ MODEL_SOURCES: dict[str, list[str]] = {
     ],
     "opencv_face_detector_uint8.pb": [
         "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20180220_uint8/opencv_face_detector_uint8.pb",
-    ],
-    "age_deploy.prototxt": [
-        "https://raw.githubusercontent.com/smahesh29/Gender-and-Age-Detection/master/age_deploy.prototxt",
-    ],
-    "age_net.caffemodel": [
-        "https://raw.githubusercontent.com/smahesh29/Gender-and-Age-Detection/master/age_net.caffemodel",
-        "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_gender_age/age_net.caffemodel",
-    ],
-    "gender_deploy.prototxt": [
-        "https://raw.githubusercontent.com/smahesh29/Gender-and-Age-Detection/master/gender_deploy.prototxt",
-    ],
-    "gender_net.caffemodel": [
-        "https://raw.githubusercontent.com/smahesh29/Gender-and-Age-Detection/master/gender_net.caffemodel",
-        "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_gender_age/gender_net.caffemodel",
     ],
 }
 
@@ -53,7 +38,6 @@ def _is_ready(path: Path) -> bool:
 def _download_one(name: str, target: Path) -> bool:
     tmp = target.with_suffix(target.suffix + ".tmp")
     for url in MODEL_SOURCES[name]:
-        logger.info("下载 %s <- %s", name, url)
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "lookuface-model-downloader"})
             with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as resp, tmp.open("wb") as fh:
@@ -63,14 +47,11 @@ def _download_one(name: str, target: Path) -> bool:
                         break
                     fh.write(chunk)
         except (urllib.error.URLError, OSError) as exc:
-            logger.warning("下载失败（%s）：%s", name, exc)
             tmp.unlink(missing_ok=True)
             continue
         if _is_ready(tmp):
             tmp.replace(target)
-            logger.info("%s 下载完成（%d字节）", name, target.stat().st_size)
             return True
-        logger.warning("下载内容为空：%s", url)
         tmp.unlink(missing_ok=True)
     return False
 
@@ -84,7 +65,6 @@ def ensure_models(force: bool = False) -> list[str]:
     for name in MODEL_SOURCES:
         target = model_dir / name
         if not force and _is_ready(target):
-            logger.info("%s 已存在，跳过", name)
             continue
         if not _download_one(name, target):
             failed.append(name)
@@ -98,9 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
     failed = ensure_models(force=args.force)
     if failed:
-        logger.error("以下模型下载失败，请手动放入 %s：%s", settings.MODEL_DIR, ", ".join(failed))
         return 1
-    logger.info("全部模型文件就绪：%s", settings.MODEL_DIR)
     return 0
 
 

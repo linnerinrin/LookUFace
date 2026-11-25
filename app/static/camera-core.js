@@ -172,7 +172,7 @@
             return true;
         }).catch(function (err) {
             self.setMessage('摄像头错误：' + (err.message || err.name));
-            LF.log.error('摄像头打开失败: ' + (err.message || err.name));
+            console.warn('摄像头打开失败: ' + (err.message || err.name));
             return false;
         });
     };
@@ -264,7 +264,6 @@
                 if (self.recordBtn) self.recordBtn.disabled = false;
                 if (self.registerBtn) self.registerBtn.disabled = false;
                 self.setMessage('摄像头已连接，正在识别…');
-                self._notifyParent(true);
             };
 
             self.ws.onmessage = function (event) {
@@ -279,7 +278,7 @@
             };
 
             self.ws.onerror = function () {
-                LF.log.warn('摄像头 WebSocket 连接错误');
+                console.warn('摄像头 WebSocket 连接错误');
             };
         });
     };
@@ -305,7 +304,6 @@
         if (this.fpsElement) this.fpsElement.textContent = 'FPS: --';
         if (this.overlayCtx) this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
         if (this.isRecording) this.stopRecording();
-        this._notifyParent(false);
     };
 
     CameraApp.prototype._startHeartbeat = function () {
@@ -323,12 +321,6 @@
             window.clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
-    };
-
-    CameraApp.prototype._notifyParent = function (connected) {
-        try {
-            window.parent.postMessage({ type: 'status', connected: connected, role: this.role }, '*');
-        } catch (e) { /* ignore */ }
     };
 
     // ------------------------------------------------------------------ //
@@ -383,12 +375,14 @@
                 ? ' (' + (face.identity_confidence * 100).toFixed(0) + '%)'
                 : '';
 
+            var detConf = (face.detection_confidence > 0)
+                ? '<p>置信度: ' + (face.detection_confidence * 100).toFixed(1) + '%</p>'
+                : '';
+
             html += '<div class="' + cardClass + '">' +
                 '<h3>人脸 ' + (i + 1) + '</h3>' +
                 '<p>身份: <strong>' + LF.escapeHtml(face.identity) + '</strong>' + confidence + '</p>' +
-                '<p>性别: <strong>' + LF.escapeHtml(face.gender) + '</strong></p>' +
-                '<p>年龄: <strong>' + LF.escapeHtml(face.age) + '</strong></p>' +
-                '<p>置信度: ' + (face.confidence * 100).toFixed(1) + '%</p>' +
+                detConf +
                 '</div>';
         }
         this.resultContent.innerHTML = html;

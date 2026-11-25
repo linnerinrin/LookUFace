@@ -18,11 +18,6 @@
 
     // 字段 -> 输入框 id，顺序与页面一致
     var FIELDS = [
-        ['billing_rate_per_minute', 'billingRate'],
-        ['max_session_minutes', 'maxSession'],
-        ['away_timeout_minutes', 'awayTimeout'],
-        ['checkin_debounce_seconds', 'checkinDebounce'],
-        ['checkout_debounce_seconds', 'checkoutDebounce'],
         ['recognize_threshold', 'recognizeThreshold'],
         ['face_conf_threshold', 'faceConfThreshold']
     ];
@@ -64,7 +59,7 @@
         parts.push('服务监听地址：' + esc(host));
         if (host === '0.0.0.0' || host === '::') {
             parts.push('<span class="warn">注意：系统没有登录校验，监听 0.0.0.0 意味着同网段任何人都能'
-                + '查看人脸库、修改账单与这些设置。</span>');
+                + '查看人脸库与这些设置。</span>');
         }
         return parts.join('<br>');
     }
@@ -78,7 +73,7 @@
             if (!quiet) LF.toast('已读取当前设置', false);
         } catch (err) {
             setStatus('<span class="warn">读取失败：' + esc(err.message) + '</span>');
-            LF.log.warn('读取场地设置失败: ' + err.message);
+            console.warn('读取场地设置失败: ' + err.message);
         }
     }
 
@@ -117,7 +112,7 @@
             LF.toast('已保存，立即生效', false);
         } catch (err) {
             LF.toast(err.message || '保存失败', true);
-            LF.log.warn('保存场地设置失败: ' + err.message);
+            console.warn('保存场地设置失败: ' + err.message);
         } finally {
             if (btn) btn.disabled = false;
         }

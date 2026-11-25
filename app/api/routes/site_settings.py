@@ -1,5 +1,3 @@
-# """模块：场地设置路由"""
-# """架构作用：将局部配置更新交给设置服务，并返回生效及持久化状态"""
 """场地设置路由
 
 改完**立刻生效**（业务代码每次现取 ``settings``），并写回 ``.env`` 以便重启后保留
@@ -11,7 +9,6 @@ from fastapi import APIRouter
 
 from app.api.schemas import SiteSettingsResponse, UpdateSiteSettingsRequest
 from app.config import settings
-from app.logger import logger
 from app.services.settings_service import site_settings_service
 
 router = APIRouter(prefix="/settings", tags=["场地设置"])
@@ -43,7 +40,6 @@ async def update_site_settings(request: UpdateSiteSettingsRequest) -> SiteSettin
     （例如目录只读），重启后会回到旧值
     """
     values, persisted = site_settings_service.update(request.model_dump(exclude_none=True))
-    logger.info("场地设置更新请求已处理 persisted=%s", persisted)
     return _to_response(values, persisted)
 
 

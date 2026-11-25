@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>场地设置</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234a90e2'/%3E%3Cpath d='M14 46V30m12 16V20m12 26V34m12 12V24' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="manager.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
     <style>
@@ -74,8 +75,8 @@
                 <a href="manager.html" class="nav-item">
                     <span>仓库管理</span>
                 </a>
-                <a href="console.html" class="nav-item">
-                    <span>控制台</span>
+                <a href="dashboard.html" class="nav-item">
+                    <span>数据看板</span>
                 </a>
                 <a href="settings.html" class="nav-item active">
                     <span>场地设置</span>
@@ -94,51 +95,6 @@
             </header>
 
             <div class="settings-stack">
-                <section class="settings-card">
-                    <h3>计费</h3>
-                    <p class="settings-desc">金额与时长始终由服务端计算，这里改的是计算所用的参数。</p>
-                    <div class="settings-row">
-                        <label class="settings-label" for="billingRate">
-                            计费单价
-                            <small>元 / 分钟。不足一分钟不计费。</small>
-                        </label>
-                        <input class="settings-input" type="number" id="billingRate" step="0.01" min="0" max="1000">
-                    </div>
-                    <div class="settings-row">
-                        <label class="settings-label" for="maxSession">
-                            单次计费上限
-                            <small>分钟。防止异常数据产生天价账单。</small>
-                        </label>
-                        <input class="settings-input" type="number" id="maxSession" step="1" min="1">
-                    </div>
-                </section>
-
-                <section class="settings-card">
-                    <h3>会话</h3>
-                    <p class="settings-desc">暂离不结算、不推进计费起点；超时未归会自动签退结算。</p>
-                    <div class="settings-row">
-                        <label class="settings-label" for="awayTimeout">
-                            暂离超时
-                            <small>分钟。超过则自动签退结算。</small>
-                        </label>
-                        <input class="settings-input" type="number" id="awayTimeout" step="1" min="1" max="1440">
-                    </div>
-                    <div class="settings-row">
-                        <label class="settings-label" for="checkinDebounce">
-                            签到去抖
-                            <small>秒。同一张脸在该窗口内的重复识别只触发一次。</small>
-                        </label>
-                        <input class="settings-input" type="number" id="checkinDebounce" step="1" min="0" max="300">
-                    </div>
-                    <div class="settings-row">
-                        <label class="settings-label" for="checkoutDebounce">
-                            签退去抖
-                            <small>秒。同上，作用于暂离 / 签退。</small>
-                        </label>
-                        <input class="settings-input" type="number" id="checkoutDebounce" step="1" min="0" max="300">
-                    </div>
-                </section>
-
                 <section class="settings-card">
                     <h3>识别阈值</h3>
                     <p class="settings-desc">识别阈值需要在真实人脸数据上标定，改小会更容易认错人。</p>

@@ -1,5 +1,3 @@
-# """模块：人脸数据仓储"""
-# """架构作用：集中查询、修改人脸记录和会话状态列"""
 """数据访问层：所有UserFace的读写集中在此，人脸记录以 ``name`` 唯一"""
 
 from __future__ import annotations
@@ -11,8 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import UserFace
-from app.logger import logger
+from app.db.models import SessionRecord, UserFace
 
 
 # --------------------------------------------------------------------------- #
@@ -116,7 +113,6 @@ def delete_face(db: Session, *, name: str) -> UserFace | None:
     screenshot = face.screenshot
     db.delete(face)
     db.flush()
-    logger.info("已删除人脸记录 name=%s screenshot=%s", name, screenshot)
     return face
 
 
@@ -124,7 +120,7 @@ def delete_face(db: Session, *, name: str) -> UserFace | None:
 UNSET: Any = object()
 
 
-# 写入在线/暂离/签到时间等状态字段：CAS防并发覆盖，不commit（事务由业务层收口）
+# 写入在场标记、签到时间等状态字段：CAS防并发覆盖，不commit（事务由业务层收口）
 def set_face_state(
     db: Session,
     *,
@@ -171,12 +167,86 @@ def set_face_state(
     result = db.execute(stmt.values(**values))
     if result.rowcount == 0:
         # CAS条件未命中：记录已被并发修改，拒绝覆盖
-        logger.warning(
-            "set_face_state CAS 未命中 face_id=%s expected_online=%s expected_away=%s",
-            face_id, expected_online, expected_away,
-        )
         return False
     return True
+
+
+# --------------------------------------------------------------------------- #
+# SessionRecord（进出场流水）
+# --------------------------------------------------------------------------- #
+
+
+# 签到写一条未闭合流水；事务由调用方收口
+def create_session_record(
+    db: Session,
+    *,
+    name: str,
+    checkin_at: datetime,
+    source: str = "manual",
+) -> SessionRecord:
+    """写入一条「已进场、未出场」的流水"""
+    record = SessionRecord(
+        name=name,
+        checkin_at=checkin_at,
+        source=source,
+    )
+    db.add(record)
+    db.flush()
+    return record
+
+
+# 取某人最近一条未闭合流水（正常业务下每次在场所对应唯一一条）
+def open_session_record(db: Session, *, name: str) -> SessionRecord | None:
+    return db.execute(
+        select(SessionRecord)
+        .where(SessionRecord.name == name)
+        .where(SessionRecord.checkout_at.is_(None))
+        .order_by(SessionRecord.checkin_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+# 闭合流水：只在未闭合时写入，返回是否实际更新（CAS语义，避免覆盖历史记录）
+def close_session_record(
+    db: Session,
+    *,
+    record_id: int,
+    checkout_at: datetime,
+    duration_seconds: int,
+    duration_minutes: int,
+) -> bool:
+    """补齐出场时刻与时长；已闭合的记录不会被二次改写"""
+    result = db.execute(
+        update(SessionRecord)
+        .where(SessionRecord.id == record_id)
+        .where(SessionRecord.checkout_at.is_(None))
+        .values(
+            checkout_at=checkout_at,
+            duration_seconds=int(duration_seconds),
+            duration_minutes=int(duration_minutes),
+        )
+    )
+    return result.rowcount > 0
+
+
+# 按「日」或「人」筛选流水，按签到时间倒序；不提交
+def list_session_records(
+    db: Session,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    name: str | None = None,
+    limit: int = 500,
+) -> Sequence[SessionRecord]:
+    stmt = select(SessionRecord)
+    if start is not None:
+        stmt = stmt.where(SessionRecord.checkin_at >= start)
+    if end is not None:
+        stmt = stmt.where(SessionRecord.checkin_at < end)
+    if name is not None:
+        stmt = stmt.where(SessionRecord.name == name)
+    stmt = stmt.order_by(SessionRecord.checkin_at.desc()).limit(max(1, int(limit)))
+    return db.execute(stmt).scalars().all()
 
 
 # 返回全部姓名，用于清理已删除记录对应的失效运行态
@@ -186,7 +256,7 @@ def all_face_names(db: Session) -> set[str]:
     return {str(n) for (n,) in rows}
 
 
-# 返回所有在线记录，供超时暂离的兜底扫描
+# 返回所有在场记录
 def online_faces(db: Session) -> Sequence[UserFace]:
     return db.execute(select(UserFace).where(UserFace.is_online.is_(True))).scalars().all()
 
@@ -194,11 +264,15 @@ def online_faces(db: Session) -> Sequence[UserFace]:
 __all__ = [
     "UNSET",
     "all_face_names",
+    "close_session_record",
+    "create_session_record",
     "delete_face",
     "get_face",
     "get_face_by_id",
     "list_faces",
+    "list_session_records",
     "online_faces",
+    "open_session_record",
     "rename_face",
     "set_face_state",
     "upsert_face",

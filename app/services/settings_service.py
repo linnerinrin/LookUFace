@@ -1,15 +1,13 @@
-# """模块：场地设置服务"""
-# """架构作用：更新进程内配置，并用临时文件替换环境配置文件"""
 """场地设置服务：在线调整业务参数并持久化到 ``.env``
 
 本模块提供两件事：
 
 1. **运行时生效**：直接改 ``settings`` 这个单例上的字段。所有业务代码都是
-   ``settings.BILLING_RATE_PER_MINUTE`` 现取现用，因此立刻生效、无需重启
+   ``settings.RECOGNIZE_THRESHOLD`` 现取现用，因此立刻生效、无需重启
 2. **落盘**：把改动写回 ``.env``，重启后仍然保留。写入是「保留注释与键顺序、
    只替换目标行」的定点改写，然后 ``os.replace`` 原子替换，不会写坏整个文件
 
-安全提示：这些值会直接影响计费。因为系统已无身份校验，
+安全提示：这些值会直接改变识别行为。因为系统已无身份校验，
 只有可信环境才应开放该接口 —— ``HOST`` 默认 ``127.0.0.1`` 即是这层前提
 """
 
@@ -21,26 +19,15 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
-from app.logger import logger
 
 #: 设置字段名 -> 环境变量名。顺序即页面展示顺序
 FIELD_TO_ENV: dict[str, str] = {
-    "billing_rate_per_minute": "BILLING_RATE_PER_MINUTE",
-    "away_timeout_minutes": "AWAY_TIMEOUT_MINUTES",
-    "max_session_minutes": "MAX_SESSION_MINUTES",
-    "checkin_debounce_seconds": "CHECKIN_DEBOUNCE_SECONDS",
-    "checkout_debounce_seconds": "CHECKOUT_DEBOUNCE_SECONDS",
     "recognize_threshold": "RECOGNIZE_THRESHOLD",
     "face_conf_threshold": "FACE_CONF_THRESHOLD",
 }
 
 #: 整型字段（其余按float处理），用于确定落盘时的格式
-_INT_FIELDS = {
-    "away_timeout_minutes",
-    "max_session_minutes",
-    "checkin_debounce_seconds",
-    "checkout_debounce_seconds",
-}
+_INT_FIELDS: set[str] = set()
 
 
 # 将有限的业务字段转换为环境变量文本；浮点数按六位小数写入
@@ -99,7 +86,6 @@ class SiteSettingsService:
                 env_key = FIELD_TO_ENV[field]
                 # pydantic BaseSettings允许赋值；业务代码每次现取，立刻生效
                 object.__setattr__(settings, env_key, value)
-                logger.info("场地设置已更新 %s=%s（运行时生效）", env_key, value)
 
             try:
                 self._persist_to_env(cleaned)
@@ -107,7 +93,6 @@ class SiteSettingsService:
                 self._last_persist_ok = True
                 self._last_persist_error = None
             except OSError as exc:  # 只读目录 / 权限不足
-                logger.error("场地设置落盘失败（运行时值已生效，重启会丢失）：%s", exc)
                 persisted = False
                 self._last_persist_ok = False
                 self._last_persist_error = str(exc)
@@ -148,7 +133,6 @@ class SiteSettingsService:
         temp_path = path.with_name(path.name + ".tmp")
         temp_path.write_text(payload, encoding="utf-8")
         os.replace(temp_path, path)
-        logger.info("场地设置已写入 %s（%s）", path, ", ".join(sorted(pending)))
 
     # ------------------------------------------------------------------ #
     # 运维辅助

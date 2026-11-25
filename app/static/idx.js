@@ -44,22 +44,4 @@
         logo.addEventListener('click', function () { window.location.href = 'idx.html'; });
     }
 
-    /* ---------- iframe 状态上报 ---------- */
-    window.addEventListener('message', function (event) {
-        if (event.origin !== window.location.origin) return;
-        if (!event.data || event.data.type !== 'status') return;
-
-        var statusDot = document.getElementById('statusDot');
-        var statusText = document.getElementById('statusText');
-        // 首页当前没有这两个元素；保留逻辑以便将来加入时自动生效
-        if (!statusDot || !statusText) return;
-
-        if (event.data.connected) {
-            statusDot.className = 'status-dot connected';
-            statusText.innerText = event.data.role === 'exit' ? '出口已连接' : '入口已连接';
-        } else {
-            statusDot.className = 'status-dot offline';
-            statusText.innerText = '未连接';
-        }
-    });
 })();

@@ -1,4 +1,3 @@
-# """架构作用：以OpenCV DNN将原始帧转换为按面积排序的人脸框"""
 """人脸检测（OpenCV DNN，SSD ResNet-10）"""
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ class FaceBox:
 class FaceDetector(ThreadSafeModel["FaceDetector"]):
     """OpenCV DNN人脸检测器（线程安全单例）"""
 
-    # """方法：加载检测网络及其阈值、最小人脸尺寸配置"""
+    # 方法：加载检测网络及其阈值、最小人脸尺寸配置
     def _build(self) -> None:
         self.net = load_dnn_net(
             settings.face_model_path,
@@ -60,7 +59,6 @@ class FaceDetector(ThreadSafeModel["FaceDetector"]):
         self.conf_threshold = settings.FACE_CONF_THRESHOLD
         self.min_face_size = settings.MIN_FACE_SIZE
 
-# """方法：把帧转换为DNN blob，筛选、裁剪并按面积排序检测框"""
     @guarded
     def detect(
         self,

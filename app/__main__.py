@@ -1,5 +1,3 @@
-# """模块：命令行入口与浏览器启动"""
-# """架构作用：读取启动参数，启动ASGI服务并可选打开本地页面"""
 
 """程序入口
 
@@ -17,7 +15,6 @@ import threading
 import webbrowser
 
 from app.config import settings
-from app.logger import logger
 
 
 # 将浏览器打开动作延后执行，避免阻塞服务启动
@@ -27,7 +24,7 @@ def _open_browser(url: str) -> None:
         try:
             webbrowser.open(url)
         except Exception:
-            logger.warning("未能自动打开浏览器，请手动访问 %s", url)
+            print(f"未能自动打开浏览器，请手动访问 {url}")
 
     threading.Timer(1.5, _task).start()
 
@@ -44,15 +41,21 @@ def _ensure_models() -> None:
         return
     try:
         failed = ensure_models()
-    except Exception:
-        logger.exception("模型自动下载异常")
+    except Exception as exc:
+        print(f"模型自动下载异常：{exc}")
         return
     if failed:
-        logger.warning("部分模型未能自动补齐：%s", ", ".join(failed))
+        print("部分模型未能自动补齐：" + ", ".join(failed))
 
 
 # 将命令行覆盖值交给uvicorn，返回进程退出码
 def main(argv: list[str] | None = None) -> int:
+    # 终端/重定向都按 UTF-8 输出，避免中文提示乱码
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(prog="lookuface", description="LookUFace 服务")
     parser.add_argument("--host", default=settings.HOST)
     parser.add_argument("--port", type=int, default=settings.PORT)
@@ -70,18 +73,16 @@ def main(argv: list[str] | None = None) -> int:
 
     _ensure_models()
 
-    logger.info("启动 uvicorn host=%s port=%s reload=%s", args.host, args.port, args.reload)
+    print(f"启动 uvicorn host={args.host} port={args.port} reload={args.reload}")
     try:
         uvicorn.run(
             "app.main:app",
             host=args.host,
             port=args.port,
             reload=args.reload,
-            log_config=None,  # 使用我们自己的日志配置
-            access_log=False,  # 访问日志由RequestContextMiddleware记录
         )
     except KeyboardInterrupt:  # pragma: no cover
-        logger.info("收到中断信号，退出")
+        print("收到中断信号，退出")
     return 0
 
 

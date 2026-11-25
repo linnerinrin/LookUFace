@@ -1,4 +1,3 @@
-# """架构作用：承接上传字节、图像解码校验、受控路径解析与文件落盘"""
 """图像与文件的存储、校验（含上传安全加固）
 
 * 所有落盘文件名一律由服务端生成（UUID + 白名单扩展名），用户输入永不参与路径；
@@ -18,7 +17,6 @@ import numpy as np
 
 from app.config import settings
 from app.core.errors import StorageError, ValidationError
-from app.logger import logger
 
 _SAFE_NAME_PATTERN = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff_.-]")
 
@@ -26,7 +24,6 @@ _SAFE_NAME_PATTERN = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff_.-]")
 MAX_IMAGE_DIMENSION = 8000
 
 
-# """函数：清理用户标签为可读文件名片段；它不能替代目录边界校验"""
 def sanitize_label(value: str, *, max_length: int = 40, fallback: str = "unnamed") -> str:
     """把任意字符串变成安全的文件名片段（永不用于路径拼接的安全边界，但便于人读）"""
     cleaned = _SAFE_NAME_PATTERN.sub("_", (value or "").strip())
@@ -36,7 +33,6 @@ def sanitize_label(value: str, *, max_length: int = 40, fallback: str = "unnamed
     return cleaned[:max_length]
 
 
-# """函数：解析根目录与文件名并验证规范化路径仍在根目录下"""
 def safe_join(root: Path, filename: str) -> Path:
     """在 ``root`` 下安全拼接文件名，越界时抛异常"""
     root = root.resolve()
@@ -49,7 +45,6 @@ def safe_join(root: Path, filename: str) -> Path:
     return candidate
 
 
-# """函数：不解码仅从文件头读取图像宽高（支持PNG/JPEG），无法识别时返回None"""
 def _header_dimensions(contents: bytes) -> tuple[int, int] | None:
     """从图像头部元数据解析 (width, height)，避免为查尺寸而完整解码大图"""
     try:
@@ -86,7 +81,6 @@ def _header_dimensions(contents: bytes) -> tuple[int, int] | None:
     return None
 
 
-# """函数：先按字节限额与头部尺寸预检，再解码并校验内容有效性"""
 def decode_image(contents: bytes, *, max_bytes: int | None = None) -> np.ndarray:
     """把上传字节解码为BGR图像，并做尺寸与内容校验
 
@@ -121,7 +115,6 @@ def decode_image(contents: bytes, *, max_bytes: int | None = None) -> np.ndarray
     return image
 
 
-# """函数：生成服务端文件名、写入JPEG，并返回可解析的相对路径"""
 def save_screenshot(image: np.ndarray, *, prefix: str = "") -> str:
     """保存截图，返回相对路径（POSIX分隔）
 
@@ -148,14 +141,12 @@ def save_screenshot(image: np.ndarray, *, prefix: str = "") -> str:
     if not ok:
         raise StorageError("截图写入失败：cv2.imwrite 返回 False")
 
-    logger.debug("截图已保存 %s", path)
     base_dir = settings.BASE_DIR.resolve()
     if path == base_dir or base_dir in path.parents:
         return path.relative_to(base_dir).as_posix()
     return path.relative_to(settings.STORAGE_DIR.resolve()).as_posix()
 
 
-# """函数：把数据库存储值解析为绝对路径并限制在STORAGE_DIR内"""
 def resolve_stored_path(stored: str | None) -> Path | None:
     """把数据库里的存储路径还原为绝对路径，并做越界校验
 
@@ -175,11 +166,9 @@ def resolve_stored_path(stored: str | None) -> Path | None:
         # 截图只允许落在storage目录下
         if candidate == allowed_root or allowed_root in candidate.parents:
             return candidate
-    logger.warning("拒绝访问越界的截图路径：%s", stored)
     return None
 
 
-# """函数：解析并删除允许目录内的文件，返回是否实际删除"""
 def delete_file(stored: str | None) -> bool:
     """删除 ``storage`` 下的文件。越界路径直接拒绝"""
     path = resolve_stored_path(stored)
@@ -189,7 +178,6 @@ def delete_file(stored: str | None) -> bool:
         path.unlink()
         return True
     except OSError as exc:  # pragma: no cover
-        logger.warning("删除文件失败 %s: %s", path, exc)
         return False
 
 

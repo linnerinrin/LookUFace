@@ -1,5 +1,3 @@
-# """模块：健康检查路由"""
-# """架构作用：报告数据库连通性与模型文件预检结果"""
 """健康检查路由"""
 
 from __future__ import annotations
@@ -11,7 +9,6 @@ from sqlalchemy import text
 from app.api.deps import DbSession
 from app.api.schemas import HealthResponse
 from app.config import settings
-from app.logger import logger
 
 router = APIRouter(tags=["系统"])
 
@@ -22,7 +19,6 @@ def _database_ok(db: DbSession) -> bool:
         db.execute(text("SELECT 1"))
         return True
     except Exception:
-        logger.exception("数据库健康检查失败")
         return False
 
 
@@ -39,7 +35,7 @@ async def health_check(db: DbSession) -> HealthResponse:
 
     models = preflight()
     loaded = load_readiness()
-    expected = {"FaceDetector", "GenderAgeModel"}
+    expected = {"FaceDetector"}
     models_loaded = expected.issubset(load_state for load_state in loaded)
     database_ok = _database_ok(db)
     files_ok = all(models.values())
@@ -63,8 +59,6 @@ async def version() -> dict[str, object]:
         "debug": settings.DEBUG,
         "recognize_threshold": settings.RECOGNIZE_THRESHOLD,
         "face_conf_threshold": settings.FACE_CONF_THRESHOLD,
-        "away_timeout_minutes": settings.AWAY_TIMEOUT_MINUTES,
-        "rate_per_minute": settings.BILLING_RATE_PER_MINUTE,
     }
 
 

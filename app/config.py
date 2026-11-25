@@ -1,5 +1,3 @@
-# """模块：应用配置"""
-# """架构作用：加载环境设置，校验参数并派生资源路径"""
 """应用配置
 
 **安全边界**：系统**没有任何身份校验**，因此 ``HOST`` 默认 ``127.0.0.1``，
@@ -12,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # app/config.py -> app/ -> 项目根目录
@@ -43,7 +41,6 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     HOST: str = "127.0.0.1"
     PORT: int = 8835
-    LOG_LEVEL: str = "INFO"
 
     # CORS：默认仅本机。注意：这里必须与PORT保持一致 —— 用
     # http://127.0.0.1:8835打开页面时，页面对同源API的请求会带Origin头；
@@ -53,7 +50,6 @@ class Settings(BaseSettings):
     # ---------------- 路径 ----------------
     BASE_DIR: Path = BASE_DIR
     MODEL_DIR: Path = BASE_DIR / "models"
-    LOG_DIR: Path = BASE_DIR / "logs"
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
     STORAGE_DIR: Path = BASE_DIR / "storage"
     STATIC_DIR: Path = BASE_DIR / "app" / "static"
@@ -61,10 +57,6 @@ class Settings(BaseSettings):
     # ---------------- 模型文件 ----------------
     FACE_PROTO: str = "opencv_face_detector.pbtxt"
     FACE_MODEL: str = "opencv_face_detector_uint8.pb"
-    AGE_PROTO: str = "age_deploy.prototxt"
-    AGE_MODEL: str = "age_net.caffemodel"
-    GENDER_PROTO: str = "gender_deploy.prototxt"
-    GENDER_MODEL: str = "gender_net.caffemodel"
 
     # ---------------- 数据库 ----------------
     DATABASE_URL: str = "sqlite:///./storage/face_lens.db"
@@ -76,44 +68,24 @@ class Settings(BaseSettings):
     RECOGNIZE_THRESHOLD: float = Field(default=0.75, gt=0, le=1)
     DETECTION_CONFIDENCE: float = Field(default=0.5, gt=0, le=1)
     TRACKING_CONFIDENCE: float = Field(default=0.5, gt=0, le=1)
-    # 人脸框小于该边长（像素）时跳过性别年龄/识别，避免无意义计算
+    # 人脸框小于该边长（像素）时跳过识别，避免无意义计算
     MIN_FACE_SIZE: int = Field(default=50, gt=0)
 
     # ---------------- 并发 ----------------
-    MAX_WORKERS: int = Field(default=4, gt=0, le=32)
     # 视频流背压：客户端未回包时最多缓冲的帧数，超出则丢帧而不是排队
     MAX_PENDING_FRAMES: int = Field(default=1, ge=0, le=16)
 
-    # ---------------- 业务/计费 ----------------
+    # ---------------- 业务 ----------------
     MAX_FILE_SIZE: int = Field(default=10 * 1024 * 1024, gt=0)
-    # 同一张脸在该时长内的连续识别只触发一次业务动作
-    CHECKIN_DEBOUNCE_SECONDS: int = Field(default=5, ge=0, le=300)
-    CHECKOUT_DEBOUNCE_SECONDS: int = Field(default=5, ge=0, le=300)
-    # 暂离超时：超时自动签退结算
-    AWAY_TIMEOUT_MINUTES: int = Field(default=30, gt=0, le=1440)
-    # 计费单价（元/分钟）
-    BILLING_RATE_PER_MINUTE: float = Field(default=0.5, ge=0)
-    # 单次会话最长计费时长，防止异常数据产生天价账单
-    MAX_SESSION_MINUTES: int = Field(default=1440, gt=0)
 
     # ---------------- 校验 ----------------
-    # 校验LOG_LEVEL合法值，非法输入在启动阶段直接报错
-    @field_validator("LOG_LEVEL")
-    @classmethod
-    def _validate_log_level(cls, value: str) -> str:
-        allowed = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
-        upper = (value or "INFO").upper()
-        if upper not in allowed:
-            raise ValueError(f"LOG_LEVEL 必须是 {sorted(allowed)} 之一，当前为 {value!r}")
-        return upper
-
     # 后置校验：解析并创建运行目录，缓存派生路径供属性复用
     @model_validator(mode="after")
     def _resolve_paths(self) -> Settings:
         """把相对路径统一解析到项目根目录，并保证运行时目录存在"""
         self.BASE_DIR = Path(self.BASE_DIR).resolve()
 
-        for name in ("MODEL_DIR", "LOG_DIR", "UPLOAD_DIR", "STORAGE_DIR", "STATIC_DIR"):
+        for name in ("MODEL_DIR", "UPLOAD_DIR", "STORAGE_DIR", "STATIC_DIR"):
             raw = Path(getattr(self, name))
             resolved = raw if raw.is_absolute() else (self.BASE_DIR / raw)
             setattr(self, name, resolved.resolve())
@@ -153,26 +125,6 @@ class Settings(BaseSettings):
     def face_model_path(self) -> Path:
         return self.MODEL_DIR / self.FACE_MODEL
 
-    # 年龄推理网络的结构文件路径
-    @property
-    def age_proto_path(self) -> Path:
-        return self.MODEL_DIR / self.AGE_PROTO
-
-    # 年龄推理网络的权重文件路径
-    @property
-    def age_model_path(self) -> Path:
-        return self.MODEL_DIR / self.AGE_MODEL
-
-    # 性别推理网络的结构文件路径
-    @property
-    def gender_proto_path(self) -> Path:
-        return self.MODEL_DIR / self.GENDER_PROTO
-
-    # 性别推理网络的权重文件路径
-    @property
-    def gender_model_path(self) -> Path:
-        return self.MODEL_DIR / self.GENDER_MODEL
-
     # 人脸注册截图目录，由storage写入、路由读取
     @property
     def screenshot_dir(self) -> Path:
@@ -182,12 +134,6 @@ class Settings(BaseSettings):
     @property
     def temp_upload_dir(self) -> Path:
         return self.UPLOAD_DIR / "temp"
-
-    # 二维码PNG输出目录，每次报价生成新文件
-    @property
-    def qrcode_dir(self) -> Path:
-        """计费二维码目录"""
-        return self.STORAGE_DIR / "qrcodes"
 
     # 解析逗号分隔的CORS允许源并去空
     @property
@@ -207,16 +153,12 @@ class Settings(BaseSettings):
         return {
             "face_proto": self.face_proto_path,
             "face_model": self.face_model_path,
-            "age_proto": self.age_proto_path,
-            "age_model": self.age_model_path,
-            "gender_proto": self.gender_proto_path,
-            "gender_model": self.gender_model_path,
         }
 
     # 启动时确保运行目录存在，缺失则创建
     def ensure_runtime_dirs(self) -> None:
-        for path in (self.LOG_DIR, self.STORAGE_DIR, self.screenshot_dir,
-                     self.qrcode_dir, self.UPLOAD_DIR, self.temp_upload_dir):
+        for path in (self.STORAGE_DIR, self.screenshot_dir,
+                     self.UPLOAD_DIR, self.temp_upload_dir):
             path.mkdir(parents=True, exist_ok=True)
 
 

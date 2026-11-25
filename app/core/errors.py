@@ -1,4 +1,3 @@
-# """架构作用：定义跨服务层传播并由HTTP边界统一转换的业务异常"""
 """应用级异常类型
 
 统一异常语义，让路由层只需 ``raise DomainError(...)``，
@@ -17,7 +16,7 @@ class AppError(Exception):
     code: str = "internal_error"
     default_message: str = "服务器内部错误"
 
-    # """方法：组合默认异常语义和调用方覆盖值，保留结构化详情"""
+    # 方法：组合默认异常语义和调用方覆盖值，保留结构化详情
     def __init__(
         self,
         message: str | None = None,
@@ -34,7 +33,7 @@ class AppError(Exception):
         self.details = details or {}
         super().__init__(self.message)
 
-    # """方法：把业务异常转换为响应字典，按需附带详情和请求标识"""
+    # 方法：把业务异常转换为响应字典，按需附带详情和请求标识
     def to_payload(self, request_id: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "detail": self.message,

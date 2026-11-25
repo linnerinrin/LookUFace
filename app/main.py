@@ -1,11 +1,8 @@
-# """模块：应用工厂与生命周期"""
-# """架构作用：装配API、静态资源与后台任务"""
 """应用工厂与生命周期管理"""
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -17,47 +14,17 @@ from app.api.router import api_router
 from app.config import settings
 from app.core.errors_handlers import register_exception_handlers
 from app.core.middleware import BodySizeLimitMiddleware, RequestContextMiddleware
-from app.db.models import SessionLocal, init_database
-from app.logger import get_broadcaster, logger, setup_logging
+from app.db.models import init_database
 
-#: 「暂离超时自动签退」的后台扫描间隔（秒）
-SETTLE_INTERVAL_SECONDS = 60
 DESCRIPTION = """
-LookUFace —— 基于人脸识别的场地计时缴费服务。
-
-* 摄像头帧经 WebSocket 推送，服务端完成检测、性别年龄、身份识别
-* 识别到已知人脸后由**服务端**完成签到 / 暂离 / 签退与计费
-* 所有金额均由服务端按数据库时间戳计算，客户端无法指定
+LookUFace —— 基于人脸识别的打卡服务。
 """
 
 
-# 周期创建会话，把超时结算和内存态清理交给业务服务
-async def _settle_expired_sessions() -> None:
-    """兜底任务：周期性把暂离超时的会话自动签退结算"""
-    from app.services.session import session_service
-
-    while True:
-        try:
-            await asyncio.sleep(SETTLE_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            logger.debug("超时结算任务已停止")
-            raise
-
-        db = SessionLocal()
-        try:
-            session_service.auto_settle_expired(db)
-            session_service.drop_stale_runtime(db)
-        except Exception:
-            logger.exception("超时结算任务执行失败")
-        finally:
-            db.close()
-
-
-# 启动初始化资源和后台任务，退出时取消并等待任务完成
+# 启动初始化资源，退出时安全关闭
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """启动与关闭钩子"""
-    logger.info("正在启动 %s v%s（debug=%s）", settings.APP_NAME, settings.APP_VERSION, settings.DEBUG)
     settings.ensure_runtime_dirs()
     init_database()
 
@@ -66,37 +33,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     preflight()
 
-    loop = asyncio.get_running_loop()
-    get_broadcaster().attach_loop(loop)
-
-    tasks: list[asyncio.Task[None]] = [
-        asyncio.create_task(_settle_expired_sessions(), name="settle-expired-sessions"),
-    ]
-    logger.info("后台任务已启动：%s", ", ".join(task.get_name() for task in tasks))
-    logger.info(
-        "服务就绪 -> http://%s:%d/static/idx.html（API 文档 /docs）",
-        "127.0.0.1" if settings.HOST in {"0.0.0.0", "::"} else settings.HOST,
-        settings.PORT,
-    )
-
-    try:
-        yield
-    finally:
-        logger.info("正在关闭…")
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with suppress(asyncio.CancelledError):
-                await task
-        get_broadcaster().detach_loop()
-        logger.info("已安全关闭")
+    yield
 
 
 # 注册中间件、路由和静态资源，返回供ASGI加载的应用
 def create_app() -> FastAPI:
     """构建FastAPI应用"""
-    setup_logging()
-
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,

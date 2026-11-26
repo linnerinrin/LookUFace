@@ -45,15 +45,37 @@ Windows 下也可以直接跑 `start.bat`。
 |---|---|---|
 | 实时识别 | `static/idx.html` | 入口/出口两路摄像头并排，识别即打卡 |
 | 仓库管理 | `static/manager.html` | 人脸库增删改、手动签到/签退、导出 CSV |
-| 数据看板 | `static/dashboard.html` | 上方补录进出场数据；主体为 KPI + 五张多维图表（见下） |
-
-数据看板主体由服务端用 matplotlib 渲染成 PNG（异步生成，离线可用、不依赖前端图表库），
-包含：用户时长/次数排行、近 N 日趋势（可切 7/30 天）、到场时段分布、
-单次时长分布、用户 × 日期热力图。图表数据来自 `session_records` 流水表。
+| 数据看板 | `static/dashboard.html` | 上方补录进出场数据；主体为 KPI + 五张多维图表 |
 | 场地设置 | `static/settings.html` | 在线调整识别阈值并写回 `.env` |
 
 四个页面共用 `api.js`（请求封装 / 提示 / 主题）与 `manager.css` 的主题变量；
 深色模式在任意一页切换后，其余页面通过 `localStorage` + `storage` 事件同步。
+
+数据看板主体由服务端用 matplotlib 渲染成 PNG（异步生成，离线可用、不依赖前端图表库），
+包含：用户时长/次数排行、近 N 日趋势（可切 7/30 天）、到场时段分布、
+单次时长分布、用户 × 日期热力图。图表数据全部来自 `session_records` 流水表。
+
+### 界面预览
+
+**实时识别** —— 入口/出口两路摄像头并排，下方「注册人脸」可当场录入新身份：
+
+![实时识别](docs/screenshots/realtime.jpg)
+
+**仓库管理** —— 人脸库列表，每行可预览 / 修改 / 签到 / 签退 / 删除：
+
+![仓库管理](docs/screenshots/manager.jpg)
+
+**数据看板 · 上** —— 补录表单 + 今日 KPI + 用户排行 + 近 7 日趋势：
+
+![数据看板 上部](docs/screenshots/dashboard-top.jpg)
+
+**数据看板 · 下** —— 到场时段分布 + 单次时长分布 + 用户 × 日期热力图：
+
+![数据看板 下部](docs/screenshots/dashboard-charts.jpg)
+
+**场地设置** —— 识别阈值在线调整，保存即生效并写回 `.env`：
+
+![场地设置](docs/screenshots/settings.jpg)
 
 ### 测试
 
